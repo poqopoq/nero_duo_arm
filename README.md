@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Dual NERO Deployment
 
 ROS 2 Humble deployment workspace for two AgileX NERO 7-DoF arms with table mounting, dual-arm MoveIt planning, RealSense integration, software emergency-stop procedures, and camera calibration tooling.
@@ -67,3 +68,6 @@ deployment/docs/08_stage6_camera_calibration.md
 ## Safety
 
 This setup currently uses software emergency stop and a standard support pose instead of a physical E-stop, as selected by the project owner. Always return both arms to the verified support pose before disabling motors. See `deployment/docs/04_software_estop_validation.md`.
+=======
+# nero_duo_arm
+>>>>>>> origin/main

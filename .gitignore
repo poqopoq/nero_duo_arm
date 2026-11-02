@@ -3,6 +3,43 @@ ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/
 
+# Legacy ROS 1 artifacts
+devel/
+logs/
+build/
+bin/
+lib/
+msg_gen/
+srv_gen/
+build_isolated/
+devel_isolated/
+msg/*Action.msg
+msg/*ActionFeedback.msg
+msg/*ActionGoal.msg
+msg/*ActionResult.msg
+msg/*Feedback.msg
+msg/*Goal.msg
+msg/*Result.msg
+msg/_*.py
+srv/_*.py
+*.cfgc
+/cfg/cpp/
+/cfg/*.py
+*.dox
+*.wikidoc
+.project
+.cproject
+CMakeLists.txt.user
+*.pcd
+qtcreator-*
+*.user
+/planning/cfg
+/planning/docs
+/planning/src
+*~
+.#*
+CATKIN_IGNORE
+
 # Python
 __pycache__/
 *.py[cod]
