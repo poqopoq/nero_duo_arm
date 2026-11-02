@@ -1,0 +1,17 @@
+# Standard support pose, symmetrized from the measured parked pose.
+# Validated collision-free in MoveIt with both_arms.
+support_pose:
+  left_joint1: -1.570796327
+  left_joint2: -1.739692000
+  left_joint3: -0.042874000
+  left_joint4: 2.137226000
+  left_joint5: -0.013753000
+  left_joint6: -0.001231000
+  left_joint7: 0.123124000
+  right_joint1: 1.570796327
+  right_joint2: -1.739692000
+  right_joint3: -0.042874000
+  right_joint4: 2.137226000
+  right_joint5: -0.013753000
+  right_joint6: -0.001231000
+  right_joint7: 0.123124000

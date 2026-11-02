@@ -1,0 +1,121 @@
+<?xml version="1.0"?>
+<robot name="dual_nero_tabletop" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find dual_nero_description)/urdf/nero_arm_macro.xacro"/>
+
+  <!-- world is on the tabletop plane, halfway between both arm bases.
+       +X points into the table; +Y points left. -->
+  <xacro:arg name="table_width" default="1.80"/>
+  <xacro:arg name="table_depth" default="0.90"/>
+  <xacro:arg name="table_thickness" default="0.03"/>
+  <xacro:arg name="base_spacing" default="0.70"/>
+  <xacro:arg name="front_edge_offset" default="0.06"/>
+  <xacro:arg name="left_base_yaw" default="3.141592653589793"/>
+  <xacro:arg name="right_base_yaw" default="3.141592653589793"/>
+  <xacro:arg name="include_gripper" default="false"/>
+  <xacro:arg name="left_tcp_x" default="0.0"/>
+  <xacro:arg name="left_tcp_y" default="0.0"/>
+  <xacro:arg name="left_tcp_z" default="0.0"/>
+  <xacro:arg name="left_tcp_roll" default="0.0"/>
+  <xacro:arg name="left_tcp_pitch" default="0.0"/>
+  <xacro:arg name="left_tcp_yaw" default="0.0"/>
+  <xacro:arg name="right_tcp_x" default="0.0"/>
+  <xacro:arg name="right_tcp_y" default="0.0"/>
+  <xacro:arg name="right_tcp_z" default="0.0"/>
+  <xacro:arg name="right_tcp_roll" default="0.0"/>
+  <xacro:arg name="right_tcp_pitch" default="0.0"/>
+  <xacro:arg name="right_tcp_yaw" default="0.0"/>
+
+  <xacro:property name="table_width" value="$(arg table_width)"/>
+  <xacro:property name="table_depth" value="$(arg table_depth)"/>
+  <xacro:property name="table_thickness" value="$(arg table_thickness)"/>
+  <xacro:property name="base_spacing" value="$(arg base_spacing)"/>
+  <xacro:property name="front_edge_offset" value="$(arg front_edge_offset)"/>
+  <xacro:property name="left_base_yaw" value="$(arg left_base_yaw)"/>
+  <xacro:property name="right_base_yaw" value="$(arg right_base_yaw)"/>
+  <xacro:property name="include_gripper" value="$(arg include_gripper)"/>
+
+  <link name="world"/>
+
+  <!-- Table top is z=0. The front edge is 60 mm behind the arm-base center. -->
+  <link name="table_slab">
+    <visual>
+      <origin xyz="${table_depth / 2.0 - front_edge_offset} 0 ${-table_thickness / 2.0}"
+              rpy="0 0 0"/>
+      <geometry>
+        <box size="${table_depth} ${table_width} ${table_thickness}"/>
+      </geometry>
+      <material name="table_grey">
+        <color rgba="0.55 0.55 0.55 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="${table_depth / 2.0 - front_edge_offset} 0 ${-table_thickness / 2.0}"
+              rpy="0 0 0"/>
+      <geometry>
+        <box size="${table_depth} ${table_width} ${table_thickness}"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="world_to_table_slab" type="fixed">
+    <parent link="world"/>
+    <child link="table_slab"/>
+  </joint>
+
+  <!-- world origin is the midpoint of the two base centers. -->
+  <link name="left_base_mount"/>
+  <joint name="world_to_left_base" type="fixed">
+    <parent link="world"/>
+    <child link="left_base_mount"/>
+    <origin xyz="0 ${base_spacing / 2.0} 0"
+            rpy="0 0 ${left_base_yaw}"/>
+  </joint>
+
+  <link name="right_base_mount"/>
+  <joint name="world_to_right_base" type="fixed">
+    <parent link="world"/>
+    <child link="right_base_mount"/>
+    <origin xyz="0 ${-base_spacing / 2.0} 0"
+            rpy="0 0 ${right_base_yaw}"/>
+  </joint>
+
+  <xacro:nero_arm prefix="left_" parent="left_base_mount"
+                  include_gripper="${include_gripper}">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:nero_arm>
+
+  <xacro:nero_arm prefix="right_" parent="right_base_mount"
+                  include_gripper="${include_gripper}">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:nero_arm>
+
+  <!-- Blank tool frames. tool0 is the arm flange; tcp_link is parameterized. -->
+  <link name="left_tool0"/>
+  <joint name="left_link7_to_tool0" type="fixed">
+    <parent link="left_link7"/>
+    <child link="left_tool0"/>
+    <origin xyz="0.031 0 -0.0235" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+  <link name="left_tcp_link"/>
+  <joint name="left_tool0_to_tcp" type="fixed">
+    <parent link="left_tool0"/>
+    <child link="left_tcp_link"/>
+    <origin xyz="$(arg left_tcp_x) $(arg left_tcp_y) $(arg left_tcp_z)"
+            rpy="$(arg left_tcp_roll) $(arg left_tcp_pitch) $(arg left_tcp_yaw)"/>
+  </joint>
+
+  <link name="right_tool0"/>
+  <joint name="right_link7_to_tool0" type="fixed">
+    <parent link="right_link7"/>
+    <child link="right_tool0"/>
+    <origin xyz="0.031 0 -0.0235" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+  <link name="right_tcp_link"/>
+  <joint name="right_tool0_to_tcp" type="fixed">
+    <parent link="right_tool0"/>
+    <child link="right_tcp_link"/>
+    <origin xyz="$(arg right_tcp_x) $(arg right_tcp_y) $(arg right_tcp_z)"
+            rpy="$(arg right_tcp_roll) $(arg right_tcp_pitch) $(arg right_tcp_yaw)"/>
+  </joint>
+
+</robot>

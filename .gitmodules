@@ -1,0 +1,12 @@
+[submodule "ros2_ws/src/agx_arm_ros"]
+	path = ros2_ws/src/agx_arm_ros
+	url = https://github.com/agilexrobotics/agx_arm_ros.git
+	branch = ros2
+[submodule "dependencies/pyAgxArm"]
+	path = dependencies/pyAgxArm
+	url = https://github.com/agilexrobotics/pyAgxArm.git
+	branch = master
+[submodule "references/cc_agx_arm_ros"]
+	path = references/cc_agx_arm_ros
+	url = https://github.com/CloudChef-Inc/cc_agx_arm_ros.git
+	branch = ros2

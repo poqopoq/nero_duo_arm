@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="dual_nero_tabletop">
+  <group name="left_arm">
+    <chain base_link="left_base_link" tip_link="left_tcp_link"/>
+  </group>
+
+  <group name="right_arm">
+    <chain base_link="right_base_link" tip_link="right_tcp_link"/>
+  </group>
+
+  <group name="both_arms">
+    <group name="left_arm"/>
+    <group name="right_arm"/>
+  </group>
+
+  <group_state group="left_arm" name="home">
+    <joint name="left_joint1" value="0"/>
+    <joint name="left_joint2" value="0"/>
+    <joint name="left_joint3" value="0"/>
+    <joint name="left_joint4" value="0"/>
+    <joint name="left_joint5" value="0"/>
+    <joint name="left_joint6" value="0"/>
+    <joint name="left_joint7" value="0"/>
+  </group_state>
+
+  <group_state group="right_arm" name="home">
+    <joint name="right_joint1" value="0"/>
+    <joint name="right_joint2" value="0"/>
+    <joint name="right_joint3" value="0"/>
+    <joint name="right_joint4" value="0"/>
+    <joint name="right_joint5" value="0"/>
+    <joint name="right_joint6" value="0"/>
+    <joint name="right_joint7" value="0"/>
+  </group_state>
+
+
+
+  <group_state group="left_arm" name="support">
+    <joint name="left_joint1" value="-1.570796327"/>
+    <joint name="left_joint2" value="-1.739692000"/>
+    <joint name="left_joint3" value="-0.042874000"/>
+    <joint name="left_joint4" value="2.137226000"/>
+    <joint name="left_joint5" value="-0.013753000"/>
+    <joint name="left_joint6" value="-0.001231000"/>
+    <joint name="left_joint7" value="0.123124000"/>
+  </group_state>
+
+  <group_state group="right_arm" name="support">
+    <joint name="right_joint1" value="1.570796327"/>
+    <joint name="right_joint2" value="-1.739692000"/>
+    <joint name="right_joint3" value="-0.042874000"/>
+    <joint name="right_joint4" value="2.137226000"/>
+    <joint name="right_joint5" value="-0.013753000"/>
+    <joint name="right_joint6" value="-0.001231000"/>
+    <joint name="right_joint7" value="0.123124000"/>
+  </group_state>
+
+  <group_state group="both_arms" name="support">
+    <joint name="left_joint1" value="-1.570796327"/>
+    <joint name="left_joint2" value="-1.739692000"/>
+    <joint name="left_joint3" value="-0.042874000"/>
+    <joint name="left_joint4" value="2.137226000"/>
+    <joint name="left_joint5" value="-0.013753000"/>
+    <joint name="left_joint6" value="-0.001231000"/>
+    <joint name="left_joint7" value="0.123124000"/>
+    <joint name="right_joint1" value="1.570796327"/>
+    <joint name="right_joint2" value="-1.739692000"/>
+    <joint name="right_joint3" value="-0.042874000"/>
+    <joint name="right_joint4" value="2.137226000"/>
+    <joint name="right_joint5" value="-0.013753000"/>
+    <joint name="right_joint6" value="-0.001231000"/>
+    <joint name="right_joint7" value="0.123124000"/>
+  </group_state>
+
+  <!-- Adjacent-link collision exclusions for the left arm. -->
+  <disable_collisions link1="left_base_link" link2="left_link1" reason="Adjacent"/>
+  <disable_collisions link1="left_link1" link2="left_link2" reason="Adjacent"/>
+  <disable_collisions link1="left_link2" link2="left_link3" reason="Adjacent"/>
+  <disable_collisions link1="left_link3" link2="left_link4" reason="Adjacent"/>
+  <disable_collisions link1="left_link4" link2="left_link5" reason="Adjacent"/>
+  <disable_collisions link1="left_link5" link2="left_link6" reason="Adjacent"/>
+  <disable_collisions link1="left_link6" link2="left_link7" reason="Adjacent"/>
+  <disable_collisions link1="left_link7" link2="left_tool0" reason="Adjacent"/>
+  <disable_collisions link1="left_tool0" link2="left_tcp_link" reason="Adjacent"/>
+
+  <!-- Adjacent-link collision exclusions for the right arm. -->
+  <disable_collisions link1="right_base_link" link2="right_link1" reason="Adjacent"/>
+  <disable_collisions link1="right_link1" link2="right_link2" reason="Adjacent"/>
+  <disable_collisions link1="right_link2" link2="right_link3" reason="Adjacent"/>
+  <disable_collisions link1="right_link3" link2="right_link4" reason="Adjacent"/>
+  <disable_collisions link1="right_link4" link2="right_link5" reason="Adjacent"/>
+  <disable_collisions link1="right_link5" link2="right_link6" reason="Adjacent"/>
+  <disable_collisions link1="right_link6" link2="right_link7" reason="Adjacent"/>
+  <disable_collisions link1="right_link7" link2="right_tool0" reason="Adjacent"/>
+  <disable_collisions link1="right_tool0" link2="right_tcp_link" reason="Adjacent"/>
+
+  <!-- Mount/table contact is intentional. -->
+  <disable_collisions link1="table_slab" link2="left_base_link" reason="Adjacent"/>
+  <disable_collisions link1="table_slab" link2="right_base_link" reason="Adjacent"/>
+</robot>

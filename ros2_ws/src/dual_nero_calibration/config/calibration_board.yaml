@@ -1,0 +1,17 @@
+board:
+  type: chessboard
+
+  # 12 x 9 squares means 11 x 8 inner corners for OpenCV.
+  # If your board is physically 12 x 9 inner corners, change to 12 and 9.
+  pattern_cols: 11
+  pattern_rows: 8
+
+  # Must match the actual printed square edge length.
+  square_length_m: 0.015
+
+  # Only used when type: charuco.
+  squares_x: 7
+  squares_y: 5
+  marker_length_m: 0.0225
+  dictionary: DICT_6X6_250
+  min_charuco_corners: 8

@@ -1,0 +1,31 @@
+cameras:
+  scene:
+    mode: fixed
+    image_topic: /camera_scene/color/image_raw
+    info_topic: /camera_scene/color/camera_info
+    camera_link_frame: camera_scene_link
+    optical_frame: camera_scene_color_optical_frame
+    parent_frame: world
+    board_pose_in_world:
+      xyz: [0.45, 0.0, 0.0]
+      rpy: [0.0, 0.0, 0.0]
+
+  left_wrist:
+    mode: eye_in_hand
+    image_topic: /camera_left_wrist/color/image_raw
+    info_topic: /camera_left_wrist/color/camera_info
+    camera_link_frame: camera_left_wrist_link
+    optical_frame: camera_left_wrist_color_optical_frame
+    parent_frame: left_tool0
+    base_frame: world
+    tool_frame: left_tool0
+
+  right_wrist:
+    mode: eye_in_hand
+    image_topic: /camera_right_wrist/color/image_raw
+    info_topic: /camera_right_wrist/color/camera_info
+    camera_link_frame: camera_right_wrist_link
+    optical_frame: camera_right_wrist_color_optical_frame
+    parent_frame: right_tool0
+    base_frame: world
+    tool_frame: right_tool0

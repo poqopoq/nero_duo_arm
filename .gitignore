@@ -1,0 +1,18 @@
+# ROS 2 build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Raw calibration data and generated results
+calibration_data/
+calibration_results/
+
+# Archives and local environment files
+*.tar.gz
+*.tar.gz.sha256
+.env
