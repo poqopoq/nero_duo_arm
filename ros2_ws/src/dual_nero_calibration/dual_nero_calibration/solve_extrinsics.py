@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation
 
 from .common import (
     average_transforms,
+    default_deployment_dir,
     invert_transform,
     load_yaml,
     transform_from_xyz_rpy,
@@ -116,9 +117,11 @@ def main() -> None:
     else:
         raise RuntimeError(f"Unsupported mode: {camera_cfg['mode']}")
 
-    output = Path(args.output or
-                  Path('/home/a/workspace/dual_nero_deployment/calibration_results') /
-                  f'{args.camera}_extrinsic.yaml')
+    output = Path(
+        args.output or
+        default_deployment_dir('calibration_results') /
+        f'{args.camera}_extrinsic.yaml'
+    )
     write_extrinsic_yaml(
         output, args.camera, parent, child, transform,
         len(samples), trans_rms, rot_rms)

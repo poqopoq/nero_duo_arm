@@ -2,7 +2,7 @@
 
 > 开始日期：2026-11-02  
 > 前置模型：`dual_nero_description`  
-> 当前状态：**规划、碰撞、轨迹桥 dry-run 和左臂真机执行均已通过（6/7）**；夹爪规划组待完成。
+> 当前状态：**规划、碰撞、轨迹桥 dry-run、单臂/双臂真机执行、真实轨迹取消安全联锁均已通过**；夹爪规划组待完成。
 
 ## 1. 规划组
 
@@ -64,7 +64,7 @@ dual_nero_ws/src/dual_nero_moveit_config
 启动：
 
 ```bash
-cd /home/a/workspace/dual_nero_ws
+cd /home/work/nero_duo_arm/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch dual_nero_moveit_config moveit_planning.launch.py
@@ -138,7 +138,7 @@ dual_nero_deployment/scripts/test_dual_collision.py
 启动：
 
 ```bash
-cd /home/a/workspace/dual_nero_ws
+cd /home/work/nero_duo_arm/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch dual_nero_moveit_config moveit_planning.launch.py
@@ -220,9 +220,9 @@ Controller 'dual_arm_controller' successfully finished
 
 - [ ] 夹爪选型后增加左右夹爪规划组。
 - [x] 真实 NERO 左臂执行验证。
-- [ ] 真实执行前确认 `speed_percent=5`、工作空间无人、软件急停可操作。
+- [x] 真实执行前确认 `speed_percent=5`、工作空间无人、软件急停可操作。
 - [x] 真实执行时桥切换到 `dry_run:=false`。
-- [ ] 验证取消轨迹时左右控制门关闭并触发软件急停。
+- [x] 验证取消轨迹时左右控制门关闭并触发软件急停。
 
 
 ## 13. 左臂真实 MoveIt 执行
@@ -262,8 +262,8 @@ External control gate closed
 
 ## 14. 下一步
 
-- [ ] 双臂 `both_arms` 真实低速执行。
-- [ ] 真实轨迹取消时验证软件急停和两侧控制门关闭。
+- [x] 双臂 `both_arms` 真实低速执行。
+- [x] 真实轨迹取消时验证软件急停和两侧控制门关闭。
 - [ ] 夹爪选型后增加左右夹爪规划组和真实 TCP。
 - [ ] 相机 Hub 到位后恢复三机标定。
 
@@ -325,30 +325,31 @@ dual_nero_deployment/config/support_pose.yaml
 
 生成方法：
 
-- 以当前左右臂实际停靠姿态为参考。
-- `joint1` 左右对称化为 `∓π/2`。
-- `joint2..joint7` 取左右测量平均值，清理微小不对称。
+- 禁用双电机，让左右臂落到各自的重力自然平衡位置。
+- 连续 20 秒复测无漂移后记录左右臂实测值，不做左右对称化。
 - 写入 MoveIt 的 `left_arm/support`、`right_arm/support`、`both_arms/support`。
 - 通过 MoveIt `check_state_validity`：`valid=True, contacts=0`。
+- 实测 `joint2` 需要到 `-1.757093`、`joint4` 需要到 `2.197806`；项目 URDF
+  仅将这两个已测试方向放宽到 `-1.760` 和 `2.200`，官方 URDF/SDK 预设不改。
 
 标准值：
 
 ```text
-left_joint1:  -1.570796327
-left_joint2:  -1.739692000
-left_joint3:  -0.042874000
-left_joint4:   2.137226000
-left_joint5:  -0.013753000
-left_joint6:  -0.001231000
-left_joint7:   0.123124000
+left_joint1:  -1.574653504
+left_joint2:  -1.757092771
+left_joint3:  -0.045413467
+left_joint4:   2.196549224
+left_joint5:  -0.013561208
+left_joint6:  -0.009267698
+left_joint7:   0.122714100
 
-right_joint1:  1.570796327
-right_joint2: -1.739692000
-right_joint3: -0.042874000
-right_joint4:  2.137226000
-right_joint5: -0.013753000
-right_joint6: -0.001231000
-right_joint7:  0.123124000
+right_joint1:  1.562331480
+right_joint2: -1.752886528
+right_joint3: -0.050841441
+right_joint4:  2.197805861
+right_joint5: -0.014311700
+right_joint6: -0.007627089
+right_joint7:  0.118996548
 ```
 
 用途：
@@ -547,3 +548,103 @@ Trajectory cancelled; dry_run=True
 说明取消链路在 dry-run 下有效，且没有向真机发送命令。
 
 真实轨迹中途取消仍需在后续真机安全测试中验证。
+
+
+## 23. 原生 Ubuntu 复位到稳定 park pose（2026-11-01）
+
+新增受控复位脚本：
+
+```text
+deployment/scripts/reset_to_standard_support.sh
+deployment/scripts/reset_to_standard_support.py
+```
+
+流程：
+
+1. 以 `auto_enable=false`、`speed_percent=5`、控制门关闭启动左右驱动。
+2. 启动 `moveit_execution.launch.py dry_run:=false`。
+3. 先做 plan-only 预检，不使能电机；`--plan-only` 会在此停止。
+4. 使能左右驱动，MoveIt 以 5% 速度/加速度规划并执行到
+   `deployment/config/support_pose.yaml`。
+5. 到位后调用左右软件急停。
+6. 默认保持电机使能；只有显式 `--disable` 才失能。
+7. `--disable` 在断电前检查左右 `joint_angle_limit`，失能后等待 10 秒并复测漂移。
+
+第一次测试使用旧的、非重力稳定支撑位，确认了失能后下垂：
+
+```text
+复位后最大误差: 0.009774 rad
+左右软件急停: True
+左右失能: True
+失能后最大误差: 左 0.059341 rad / 右 0.060650 rad
+```
+
+随后把实测重力自然平衡位姿写入 `support_pose.yaml` 和 SRDF。旧 URDF 在
+`joint2` 下限和 `joint4` 上限处钳制该位姿，因此仅将
+`dual_nero_description` 中这两个已验证方向放宽到 `-1.760` / `2.200`。
+
+稳定 park pose 的最终完整失能验证：
+
+```text
+plan-only 预检:  通过，无 URDF/MoveIt 钳制警告
+规划:            23 点，2.154 s，5% 速度缩放
+MoveIt 结果:     error_code=1
+失能前误差:      0.009634 rad
+失能前超限标志:  左右 7/7 均为 false
+软件急停:        左右均 True
+失能结果:        左右均 True
+失能后误差:      0.009268 rad
+5 秒后漂移:      0.000087 rad
+电机状态:        14/14 disabled
+驱动退出后复测:  最大误差 0.009268 rad，变化 <= 0.000174 rad
+AT_SUPPORT:      True
+```
+
+当前机器人位于新的重力稳定 park pose，左右电机均已失能，姿态保持不变。
+失能前硬件状态不可用或任一超限标志为 `true` 时，脚本会拒绝失能并保持电机使能。
+
+
+## 24. 真实轨迹取消安全联锁（2026-11-01）
+
+新增可重复测试：
+
+```text
+deployment/scripts/test_trajectory_cancel_real.sh
+deployment/scripts/test_trajectory_cancel_real.py
+```
+
+测试只移动左右 `joint7` 各 0.04 rad，目标轨迹时长 4 秒。脚本在两侧都检测到
+实际运动后发送取消；测试结束后自动执行 `reset_to_standard_support.sh --disable`，
+重新验证稳定 park pose 和双电机失能。
+
+实测结果：
+
+```text
+起始 park 最大误差:       0.009268 rad
+取消前运动量:             左 0.005044 rad / 右 0.005027 rad
+取消响应:                 True
+Goal status:              5 (CANCELED)
+Action error_code:        -4 (PATH_TOLERANCE_VIOLATED)
+取消后 0.5 秒起腕部漂移:  左 0.000122 rad / 右 0.000105 rad
+左软件急停日志:           1 次
+右软件急停日志:           1 次
+左控制门关闭日志:         1 次
+右控制门关闭日志:         1 次
+```
+
+随后自动复位结果：
+
+```text
+MoveIt error_code:        1
+复位后最大误差:           0.009844 rad
+失能前硬件超限标志:       左右 7/7 均为 false
+软件急停:                 左右均 True
+失能结果:                 左右均 True
+失能后最大误差:           0.008884 rad
+失能后漂移:               0.000087 rad
+电机状态:                 14/14 disabled
+AT_SUPPORT:               True
+```
+
+结论：真实轨迹取消会停止桥接命令、调用两侧软件急停并关闭两侧控制门；自动复位
+和失能验证通过。夹爪规划组和真实 TCP 仍是阶段 5 的剩余工作。

@@ -1,0 +1,100 @@
+diff --git a/src/agx_arm_ctrl/agx_arm_ctrl/agx_arm_ctrl_single_node.py b/src/agx_arm_ctrl/agx_arm_ctrl/agx_arm_ctrl_single_node.py
+index 0dbcb1f..455fb25 100644
+--- a/src/agx_arm_ctrl/agx_arm_ctrl/agx_arm_ctrl_single_node.py
++++ b/src/agx_arm_ctrl/agx_arm_ctrl/agx_arm_ctrl_single_node.py
+@@ -18,7 +18,7 @@ from rclpy.node import Node
+ from sensor_msgs.msg import JointState
+ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+ from builtin_interfaces.msg import Time
+-from std_srvs.srv import SetBool, Empty
++from std_srvs.srv import Empty, SetBool, Trigger
+ from geometry_msgs.msg import Pose, PoseStamped, PoseArray
+ from scipy.spatial.transform import Rotation as R
+ 
+@@ -399,6 +399,10 @@ class AgxArmRosNode(Node):
+         self.create_service(SetBool, "control_enable", self._control_gate_callback)
+         self.create_service(Empty, "move_home", self._move_home_callback)
+         self.create_service(Empty, "emergency_stop", self._emergency_stop_callback)
++        self.create_service(
++            Trigger, "clear_joint_error", self._clear_joint_error_callback)
++        self.create_service(
++            Trigger, "reset_motion", self._reset_motion_callback)
+         if not self.is_switch_seamlessly:
+             self.create_service(Empty, "exit_teach_mode", self._exit_teach_mode_callback)
+ 
+@@ -1194,6 +1198,75 @@ class AgxArmRosNode(Node):
+             self.get_logger().error(f"Emergency stop failed: {e}")
+         return response
+ 
++    def _clear_joint_error_callback(self, request, response):
++        """Send the NERO joint-driver fault-clear command.
++
++        This only clears latched joint-driver faults. It does not reset the
++        motion controller, release brakes, enable motors, or move the arm.
++        """
++        try:
++            if not self._check_arm_ready():
++                response.success = False
++                response.message = "Agx_arm is not connected"
++                return response
++
++            self.agx_arm.clear_joint_error(255)
++            time.sleep(0.2)
++            arm_status = self.agx_arm.get_arm_status()
++            if arm_status is None:
++                response.success = True
++                response.message = (
++                    "Joint fault-clear command sent; arm status is unavailable")
++            else:
++                response.success = True
++                response.message = (
++                    "Joint fault-clear command sent; "
++                    f"arm_status={arm_status.msg.arm_status}, "
++                    f"err_status={arm_status.msg.err_code}")
++            self.get_logger().info(response.message)
++        except Exception as e:
++            response.success = False
++            response.message = f"Clear joint fault failed: {e}"
++            self.get_logger().error(response.message)
++        return response
++
++    def _reset_motion_callback(self, request, response):
++        """Recover the motion controller from an emergency-stop/fault state.
++
++        The external control gate must be closed so this cannot run while the
++        webapp or another client is allowed to send motion commands.
++        """
++        try:
++            if self.control_enabled:
++                response.success = False
++                response.message = (
++                    "Close the control gate before resetting the motion controller")
++                return response
++            if not self._check_arm_ready():
++                response.success = False
++                response.message = "Agx_arm is not connected"
++                return response
++
++            self.agx_arm.reset()
++            time.sleep(0.2)
++            arm_status = self.agx_arm.get_arm_status()
++            if arm_status is None:
++                response.success = True
++                response.message = (
++                    "Motion-controller reset command sent; arm status is unavailable")
++            else:
++                response.success = True
++                response.message = (
++                    "Motion-controller reset command sent; "
++                    f"arm_status={arm_status.msg.arm_status}, "
++                    f"err_status={arm_status.msg.err_code}")
++            self.get_logger().info(response.message)
++        except Exception as e:
++            response.success = False
++            response.message = f"Reset motion controller failed: {e}"
++            self.get_logger().error(response.message)
++        return response
++
+     def _exit_teach_mode_callback(self, request, response):
+         try:
+             arm_status = self.agx_arm.get_arm_status()

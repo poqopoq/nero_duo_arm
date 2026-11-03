@@ -1,7 +1,7 @@
 # 阶段 1：官方 NERO ROS 2 驱动安装记录
 
 > 记录日期：2026-10-30  
-> 工作空间：`/home/a/workspace/dual_nero_ws`  
+> 工作空间：`/home/work/nero_duo_arm/ros2_ws`
 > ROS：Humble（系统 Python 3.10）  
 > 状态：5/5；左臂稳定命名、通信和关节反馈已验证
 
@@ -42,7 +42,7 @@ Windows USB/IP：
 ## 3. 已执行：只启用左臂 CAN
 
 ```bash
-cd /home/a/workspace/dual_nero_deployment
+cd /home/work/nero_duo_arm/deployment
 sudo ./scripts/enable_can.sh can_left 1000000
 ```
 
@@ -51,7 +51,7 @@ sudo ./scripts/enable_can.sh can_left 1000000
 ## 4. 已通过：只读检查左臂关节反馈
 
 ```bash
-cd /home/a/workspace/dual_nero_deployment
+cd /home/work/nero_duo_arm/deployment
 ./scripts/check_nero_feedback.sh can_left
 ```
 

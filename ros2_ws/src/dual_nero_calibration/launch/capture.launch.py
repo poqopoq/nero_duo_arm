@@ -8,9 +8,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('camera', default_value='left_wrist'),
         DeclareLaunchArgument('samples', default_value='20'),
-        DeclareLaunchArgument(
-            'output_dir',
-            default_value='/home/a/workspace/dual_nero_deployment/calibration_data'),
+        DeclareLaunchArgument('output_dir', default_value=''),
         Node(
             package='dual_nero_calibration',
             executable='capture_chessboard',

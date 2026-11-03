@@ -10,8 +10,10 @@ case "${SIDE}" in
   *) echo "用法: $0 <left|right>" >&2; exit 1 ;;
 esac
 
-WS=/home/a/workspace/dual_nero_ws
-DEPLOY=/home/a/workspace/dual_nero_deployment
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+WS="${NERO_DUO_WS:-${ROOT_DIR}/ros2_ws}"
+DEPLOY="${NERO_DUO_DEPLOY:-${ROOT_DIR}/deployment}"
 LOG="/tmp/nero_${SIDE}_soft_estop_motion_driver.log"
 set +u
 source /opt/ros/humble/setup.bash

@@ -53,7 +53,7 @@ dual_nero_ws/src/dual_nero_description
 运行：
 
 ```bash
-cd /home/a/workspace/dual_nero_ws
+cd /home/work/nero_duo_arm/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch dual_nero_description display.launch.py

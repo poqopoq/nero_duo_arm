@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Iterable
@@ -7,6 +8,20 @@ from typing import Iterable
 import numpy as np
 import yaml
 from scipy.spatial.transform import Rotation
+
+
+def project_root() -> Path:
+    override = os.environ.get('NERO_DUO_ROOT')
+    if override:
+        return Path(override).expanduser().resolve()
+    for parent in Path(__file__).resolve().parents:
+        if (parent / 'deployment' / 'PROJECT_HANDOFF.md').is_file():
+            return parent
+    return Path.cwd().resolve()
+
+
+def default_deployment_dir(name: str) -> Path:
+    return project_root() / 'deployment' / name
 
 
 def load_yaml(path: str | Path) -> dict:

@@ -1,0 +1,19 @@
+# Mirror of deployment/config/support_pose.yaml for the installed webapp.
+# Keep these values synchronized with the canonical MoveIt park pose.
+support_pose:
+  left:
+    - -1.574653504
+    - -1.757092771
+    - -0.045413467
+    - 2.196549224
+    - -0.013561208
+    - -0.009267698
+    - 0.122714100
+  right:
+    - 1.562331480
+    - -1.752886528
+    - -0.050841441
+    - 2.197805861
+    - -0.014311700
+    - -0.007627089
+    - 0.118996548

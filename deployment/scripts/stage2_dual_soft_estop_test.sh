@@ -3,8 +3,10 @@
 set -u
 set +e
 
-WS=/home/a/workspace/dual_nero_ws
-DEPLOY=/home/a/workspace/dual_nero_deployment
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+WS="${NERO_DUO_WS:-${ROOT_DIR}/ros2_ws}"
+DEPLOY="${NERO_DUO_DEPLOY:-${ROOT_DIR}/deployment}"
 LEFT_LOG=/tmp/nero_left_dual_estop.log
 RIGHT_LOG=/tmp/nero_right_dual_estop.log
 set +u

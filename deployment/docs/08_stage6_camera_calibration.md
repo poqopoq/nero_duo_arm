@@ -71,7 +71,7 @@ capture_chessboard
 三台相机稳定后：
 
 ```bash
-cd /home/a/workspace/dual_nero_ws
+cd /home/work/nero_duo_arm/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch dual_nero_cameras all_cameras.launch.py
@@ -101,7 +101,7 @@ ros2 launch dual_nero_calibration capture.launch.py \
 ```bash
 ros2 run dual_nero_calibration solve_extrinsics \
   --camera scene \
-  --session /home/a/workspace/dual_nero_deployment/calibration_data/scene/<timestamp>
+  --session /home/work/nero_duo_arm/deployment/calibration_data/scene/<timestamp>
 ```
 
 ## 6. 左右腕 D405 手眼标定
@@ -131,11 +131,11 @@ ros2 launch dual_nero_calibration capture.launch.py \
 ```bash
 ros2 run dual_nero_calibration solve_extrinsics \
   --camera left_wrist \
-  --session /home/a/workspace/dual_nero_deployment/calibration_data/left_wrist/<timestamp>
+  --session /home/work/nero_duo_arm/deployment/calibration_data/left_wrist/<timestamp>
 
 ros2 run dual_nero_calibration solve_extrinsics \
   --camera right_wrist \
-  --session /home/a/workspace/dual_nero_deployment/calibration_data/right_wrist/<timestamp>
+  --session /home/work/nero_duo_arm/deployment/calibration_data/right_wrist/<timestamp>
 ```
 
 采集节点会自动要求机器人位姿变化：

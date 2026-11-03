@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 from pathlib import Path
 
@@ -14,6 +15,8 @@ SIDES = ('left', 'right')
 NAMES = [f'{side}_joint{i}' for side in SIDES for i in range(1, 8)]
 DELTAS = {'left': 0.03, 'right': -0.03}
 POSITION_TOLERANCE = 0.03
+ROOT = Path(os.environ.get('NERO_DUO_ROOT', Path(__file__).resolve().parents[2]))
+SUPPORT_FILE = ROOT / 'deployment' / 'config' / 'support_pose.yaml'
 
 
 class DualReturnTest(Node):
@@ -123,8 +126,8 @@ for side in SIDES:
 
 print('SUPPORT_POSE', [round(x, 6) for x in support])
 print('TEST_TARGET', [round(x, 6) for x in target])
-Path('/home/a/workspace/dual_nero_deployment/config').mkdir(parents=True, exist_ok=True)
-with open('/home/a/workspace/dual_nero_deployment/config/support_pose.yaml', 'w', encoding='utf-8') as f:
+SUPPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+with SUPPORT_FILE.open('w', encoding='utf-8') as f:
     f.write('# Captured before the real dual-arm execution test\n')
     f.write('support_pose:\n')
     for name, value in zip(NAMES, support):

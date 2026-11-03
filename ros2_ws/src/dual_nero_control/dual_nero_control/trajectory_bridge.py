@@ -7,8 +7,9 @@ joint states only. No command is sent to the robot drivers.
 from __future__ import annotations
 
 import math
+import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import rclpy
 from builtin_interfaces.msg import Duration
@@ -44,11 +45,17 @@ class DualTrajectoryBridge(Node):
         self.declare_parameter('command_rate_hz', 50.0)
         self.declare_parameter('startup_feedback_timeout', 5.0)
         self.declare_parameter('final_hold_sec', 0.5)
+        self.declare_parameter(
+            'cancel_service_name', '/dual_nero_trajectory_bridge/cancel_motion')
+        self.declare_parameter(
+            'clear_cancel_service_name', '/dual_nero_trajectory_bridge/clear_cancel')
 
         self.dry_run = bool(self.get_parameter('dry_run').value)
         self.rate_hz = float(self.get_parameter('command_rate_hz').value)
         self.feedback_timeout = float(self.get_parameter('startup_feedback_timeout').value)
         self.final_hold_sec = float(self.get_parameter('final_hold_sec').value)
+        self._cancel_lock = threading.Lock()
+        self._cancel_requested = False
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -89,6 +96,16 @@ class DualTrajectoryBridge(Node):
             execute_callback=self.execute_callback,
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
+        )
+        self.create_service(
+            Empty,
+            str(self.get_parameter('cancel_service_name').value),
+            self._cancel_motion_callback,
+        )
+        self.create_service(
+            Empty,
+            str(self.get_parameter('clear_cancel_service_name').value),
+            self._clear_motion_cancel_callback,
         )
         self.create_timer(0.02, self._publish_joint_states)
         self.get_logger().info(
@@ -151,6 +168,18 @@ class DualTrajectoryBridge(Node):
     def cancel_callback(self, _goal_handle) -> CancelResponse:
         return CancelResponse.ACCEPT
 
+    def _cancel_motion_callback(self, request, response):
+        with self._cancel_lock:
+            self._cancel_requested = True
+        self.get_logger().warn('Trajectory cancellation requested')
+        return response
+
+    def _clear_motion_cancel_callback(self, request, response):
+        with self._cancel_lock:
+            self._cancel_requested = False
+        self.get_logger().info('Trajectory cancellation latch cleared')
+        return response
+
     def _wait_future(self, future, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
         while not future.done() and time.monotonic() < deadline and rclpy.ok():
@@ -200,11 +229,26 @@ class DualTrajectoryBridge(Node):
         points = trajectory.points
         involved = sorted({self._side_from_joint(n) for n in names})
         result = FollowJointTrajectory.Result()
+        with self._cancel_lock:
+            cancel_requested = self._cancel_requested
+        if cancel_requested:
+            self.get_logger().warn('Rejecting trajectory while cancellation is latched')
+            goal_handle.abort()
+            result.error_code = FollowJointTrajectory.Result.PREEMPTED
+            return result
 
         if not self._wait_feedback(involved, self.feedback_timeout):
             self.get_logger().error('Required driver feedback unavailable')
             result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
             goal_handle.abort()
+            return result
+
+        with self._cancel_lock:
+            cancel_requested = self._cancel_requested
+        if cancel_requested:
+            self.get_logger().warn('Trajectory cancelled before gate open')
+            goal_handle.abort()
+            result.error_code = FollowJointTrajectory.Result.PREEMPTED
             return result
 
         if not self.dry_run:
@@ -214,6 +258,14 @@ class DualTrajectoryBridge(Node):
                     result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
                     goal_handle.abort()
                     return result
+            with self._cancel_lock:
+                cancel_requested = self._cancel_requested
+            if cancel_requested:
+                self.get_logger().warn('Trajectory cancelled after gate open')
+                self._emergency_stop(involved)
+                goal_handle.abort()
+                result.error_code = FollowJointTrajectory.Result.PREEMPTED
+                return result
 
         starts = {side: self._current_side(side) for side in involved}
         start_time = time.monotonic()
@@ -223,6 +275,18 @@ class DualTrajectoryBridge(Node):
 
         try:
             while rclpy.ok():
+                with self._cancel_lock:
+                    cancel_requested = self._cancel_requested
+                if cancel_requested:
+                    self.get_logger().warn(
+                        f'Trajectory cancelled by cancel service; dry_run={self.dry_run}')
+                    self._emergency_stop(involved)
+                    if goal_handle.is_cancel_requested:
+                        goal_handle.canceled()
+                    else:
+                        goal_handle.abort()
+                    result.error_code = FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED
+                    return result
                 if goal_handle.is_cancel_requested:
                     self.get_logger().warn(
                         f'Trajectory cancelled; dry_run={self.dry_run}')
@@ -248,10 +312,14 @@ class DualTrajectoryBridge(Node):
                         if side in values:
                             values[side][JOINTS[side].index(name)] = float(value)
                     if t <= point_t:
-                        alpha = 0.0 if point_t <= previous_t else (t - previous_t) / (point_t - previous_t)
+                        alpha = (
+                            0.0 if point_t <= previous_t
+                            else (t - previous_t) / (point_t - previous_t)
+                        )
                         for side in involved:
                             side_targets[side] = [
-                                previous_values[side][i] + alpha * (values[side][i] - previous_values[side][i])
+                                previous_values[side][i]
+                                + alpha * (values[side][i] - previous_values[side][i])
                                 for i in range(7)
                             ]
                         break

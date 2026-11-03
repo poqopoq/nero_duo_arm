@@ -17,7 +17,12 @@ from sensor_msgs.msg import CameraInfo, Image
 from scipy.spatial.transform import Rotation
 from tf2_ros import Buffer, TransformListener
 
-from .common import invert_transform, load_yaml, transform_from_msg
+from .common import (
+    default_deployment_dir,
+    invert_transform,
+    load_yaml,
+    transform_from_msg,
+)
 
 
 class CharucoCapture(Node):
@@ -26,7 +31,7 @@ class CharucoCapture(Node):
 
         self.declare_parameter('camera', 'left_wrist')
         self.declare_parameter('samples', 20)
-        self.declare_parameter('output_dir', '/home/a/workspace/dual_nero_deployment/calibration_data')
+        self.declare_parameter('output_dir', '')
         self.declare_parameter('min_interval_sec', 1.0)
         self.declare_parameter('min_tool_motion_m', 0.02)
         self.declare_parameter('min_tool_rotation_deg', 2.0)
@@ -34,7 +39,12 @@ class CharucoCapture(Node):
 
         self.camera = self.get_parameter('camera').value
         self.requested_samples = int(self.get_parameter('samples').value)
-        self.output_root = Path(self.get_parameter('output_dir').value)
+        output_dir = self.get_parameter('output_dir').value
+        self.output_root = (
+            Path(output_dir).expanduser()
+            if output_dir
+            else default_deployment_dir('calibration_data')
+        )
         self.min_interval = float(self.get_parameter('min_interval_sec').value)
         self.min_tool_motion = float(self.get_parameter('min_tool_motion_m').value)
         self.min_tool_rotation = float(self.get_parameter('min_tool_rotation_deg').value)

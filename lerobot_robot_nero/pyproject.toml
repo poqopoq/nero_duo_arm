@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_robot_nero"
+version = "0.1.0"
+description = "LeRobot robot plugin for dual NERO arms through a local ROS 2 bridge"
+requires-python = ">=3.12"
+dependencies = [
+    "lerobot>=0.6.1,<0.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lerobot_robot_nero*"]
+exclude = ["tests*"]
+

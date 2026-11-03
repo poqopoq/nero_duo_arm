@@ -10,7 +10,9 @@ if [ -z "${IFACE}" ]; then
   exit 1
 fi
 
-WS=/home/a/workspace/dual_nero_ws
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+WS="${NERO_DUO_WS:-${ROOT_DIR}/ros2_ws}"
 LOG="/tmp/nero_${IFACE}_feedback.log"
 set +u
 source /opt/ros/humble/setup.bash

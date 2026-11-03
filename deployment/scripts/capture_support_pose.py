@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Capture the current left/right NERO joint states as a support pose."""
+import os
 import time
 from pathlib import Path
 
@@ -8,7 +9,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 SIDES = ('left', 'right')
-OUTPUT = Path('/home/a/workspace/dual_nero_deployment/config/support_pose.yaml')
+ROOT = Path(os.environ.get('NERO_DUO_ROOT', Path(__file__).resolve().parents[2]))
+OUTPUT = ROOT / 'deployment' / 'config' / 'support_pose.yaml'
 
 
 class SupportPoseCapture(Node):

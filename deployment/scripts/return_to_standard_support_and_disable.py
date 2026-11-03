@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 from pathlib import Path
 
@@ -12,7 +13,8 @@ SIDES = ('left', 'right')
 TOLERANCE = 0.03
 TIMEOUT = 10.0
 RATE_HZ = 20.0
-SUPPORT_FILE = Path('/home/a/workspace/dual_nero_deployment/config/support_pose.yaml')
+ROOT = Path(os.environ.get('NERO_DUO_ROOT', Path(__file__).resolve().parents[2]))
+SUPPORT_FILE = ROOT / 'deployment' / 'config' / 'support_pose.yaml'
 
 
 class ReturnToSupport(Node):

@@ -44,6 +44,7 @@ CATKIN_IGNORE
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.egg-info/
 
 # Raw calibration data and generated results
 calibration_data/

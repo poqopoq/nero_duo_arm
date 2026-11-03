@@ -15,6 +15,7 @@ def _camera_node(camera_name: str, serial_no: str) -> Node:
         name=camera_name,
         output='screen',
         parameters=[{
+            'camera_name': camera_name,
             'serial_no': serial_no,
             'enable_color': True,
             'enable_depth': True,

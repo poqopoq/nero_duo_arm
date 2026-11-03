@@ -141,7 +141,7 @@ Reduced performance is expected.
 右腕 D405 接入后，执行：
 
 ```bash
-/home/a/workspace/dual_nero_deployment/scripts/check_realsense.sh
+/home/work/nero_duo_arm/deployment/scripts/check_realsense.sh
 ```
 
 左腕序列号已记录，因此可以直接从两台 D405 的枚举结果中识别右腕序列号。
@@ -233,7 +233,7 @@ dual_nero_ws/src/dual_nero_cameras
 启动命令：
 
 ```bash
-cd /home/a/workspace/dual_nero_ws
+cd /home/work/nero_duo_arm/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch dual_nero_cameras d405_pair.launch.py
@@ -295,7 +295,7 @@ WSL USB/IP 不适合作为三路 RealSense 的正式数据采集环境。建议�
 先将 D435 改接 USB3，并保持两台 D405 USB3 连接。连接后执行：
 
 ```bash
-/home/a/workspace/dual_nero_deployment/scripts/check_realsense.sh
+/home/work/nero_duo_arm/deployment/scripts/check_realsense.sh
 ```
 
 确认三台设备全部为 `5000 Mbps` 后，再进行一次三机低带宽联合测试。
@@ -356,3 +356,46 @@ dmesg: uvcvideo Non-zero status (-32)
 1. 换 USB3.2 Gen2 10 Gbps、外接供电 Hub。
 2. 或将三台相机迁到原生 Ubuntu 主机。
 3. 在最终硬件确定前，单相机标定和单相机功能验证仍可继续。
+
+
+## 18. 原生 Ubuntu USB2 功能验证（2026-11-01）
+
+当前临时连接：
+
+```text
+左腕 D405: 5000 Mbps / USB 3.20
+右腕 D405: 5000 Mbps / USB 3.20
+D435:      480 Mbps / USB 2.10（USB 2.0 线）
+```
+
+测试配置：
+
+```text
+D435 Color: 640x480 @ 15 FPS
+D435 Depth: 480x270 @ 15 FPS
+D405 Color: 480x270 @ 15 FPS
+D405 Depth: 480x270 @ 15 FPS
+align_depth.enable: true
+enable_infra / enable_infra1 / enable_infra2: false
+```
+
+D435 在 USB2 下必须关闭两个红外输出。驱动默认打开红外流时，深度帧会
+持续出现 `Frames didn't arrived within 5 seconds`；关闭后深度恢复正常。
+
+120 秒三机并行结果：
+
+```text
+D435 Color:          约 15.0 FPS
+D435 Depth:          约 15.0 FPS
+D435 Aligned Depth:  约 15.0 FPS
+D405 左 Color:       约 15.0 FPS
+D405 左 Depth:       约 15.0 FPS
+D405 左 Aligned:     约 15.0 FPS
+D405 右 Color:       约 15.0 FPS
+D405 右 Depth:       约 15.0 FPS
+D405 右 Aligned:     约 15.0 FPS
+Incomplete frame / 帧超时: 0
+```
+
+结论：USB2 临时配置已通过三机功能验证。由于 D435 仍以 480 Mbps 枚举，
+继续保留 USB3 数据线和 10 分钟正式验收待办。

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dual NERO control</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "urdf-loader": "https://esm.sh/urdf-loader@0.12.1?deps=three@0.160.0"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Dual NERO</h1>
+      <span>tabletop control</span>
+    </div>
+    <span id="status" class="status disconnected">disconnected</span>
+    <span id="safety-summary" class="safety-summary">gates: –</span>
+    <span id="motion-status" class="safety-summary">MoveIt: –</span>
+    <span class="spacer"></span>
+    <button id="cancel-motion">Cancel motion</button>
+    <button id="stop-all" class="danger">Stop both</button>
+    <span class="clock" id="wallclock">–:–:–.–</span>
+  </header>
+
+  <main>
+    <section class="viewport-wrap">
+      <div id="viewport"></div>
+      <div id="banner" class="banner hidden"></div>
+      <div class="view-hint">drag to orbit · scroll to zoom</div>
+    </section>
+
+    <aside class="controls">
+      <section class="panel both-panel" data-side="both">
+        <div class="panel-head">
+          <h2>Both arms</h2>
+          <span id="both-state" class="pill">both not ready</span>
+        </div>
+        <div class="button-row primary-row">
+          <button id="both-send" class="btn-send" title="Plan and execute both arms in one synchronized MoveIt trajectory">Both Send</button>
+          <button id="both-park" class="btn-park" title="Plan and execute both configured Park poses in one synchronized MoveIt trajectory">Both Park</button>
+        </div>
+      </section>
+
+      <section class="panel" data-side="left">
+        <div class="panel-head">
+          <h2>Left arm</h2>
+          <span class="pill" data-role="feedback">fb –</span>
+          <span class="pill" data-role="gate">gate closed</span>
+          <span class="pill" data-role="enabled">motors –</span>
+          <span class="pill" data-role="health">arm –</span>
+        </div>
+        <div class="sliders"></div>
+        <div class="button-row primary-row">
+          <button class="btn-send" title="Plan and execute with MoveIt collision checking">Send</button>
+          <button class="btn-park">Park</button>
+          <button class="btn-sync">Sync from robot</button>
+          <button class="btn-zero">Zero sliders</button>
+        </div>
+        <div class="button-row safety-row">
+          <button class="btn-gate">Open gate</button>
+          <button class="btn-enable">Enable motors</button>
+          <button class="btn-estop danger">E-stop</button>
+        </div>
+        <div class="button-row service-row">
+          <button class="btn-clear-faults" title="Send the NERO joint fault-clear command. This does not move the arm.">Clear faults</button>
+          <button class="btn-recover" title="Requires a supported arm and a closed gate. Resets the motion controller, clears joint faults, then re-enables motors.">Recover arm</button>
+        </div>
+      </section>
+
+      <section class="panel" data-side="right">
+        <div class="panel-head">
+          <h2>Right arm</h2>
+          <span class="pill" data-role="feedback">fb –</span>
+          <span class="pill" data-role="gate">gate closed</span>
+          <span class="pill" data-role="enabled">motors –</span>
+          <span class="pill" data-role="health">arm –</span>
+        </div>
+        <div class="sliders"></div>
+        <div class="button-row primary-row">
+          <button class="btn-send" title="Plan and execute with MoveIt collision checking">Send</button>
+          <button class="btn-park">Park</button>
+          <button class="btn-sync">Sync from robot</button>
+          <button class="btn-zero">Zero sliders</button>
+        </div>
+        <div class="button-row safety-row">
+          <button class="btn-gate">Open gate</button>
+          <button class="btn-enable">Enable motors</button>
+          <button class="btn-estop danger">E-stop</button>
+        </div>
+        <div class="button-row service-row">
+          <button class="btn-clear-faults" title="Send the NERO joint fault-clear command. This does not move the arm.">Clear faults</button>
+          <button class="btn-recover" title="Requires a supported arm and a closed gate. Resets the motion controller, clears joint faults, then re-enables motors.">Recover arm</button>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="cameras" id="cameras">
+    <article class="camera" data-cam="scene">
+      <div class="camera-head"><h3>Scene</h3><span class="cam-status">–</span></div>
+      <div class="camera-frame"><img alt="Scene camera" /></div>
+      <div class="camera-foot">
+        <div class="mode-switch"></div>
+        <span class="cam-stats">waiting for ROS topic</span>
+      </div>
+    </article>
+    <article class="camera" data-cam="left_wrist">
+      <div class="camera-head"><h3>Left wrist</h3><span class="cam-status">–</span></div>
+      <div class="camera-frame"><img alt="Left wrist camera" /></div>
+      <div class="camera-foot">
+        <div class="mode-switch"></div>
+        <span class="cam-stats">waiting for ROS topic</span>
+      </div>
+    </article>
+    <article class="camera" data-cam="right_wrist">
+      <div class="camera-head"><h3>Right wrist</h3><span class="cam-status">–</span></div>
+      <div class="camera-frame"><img alt="Right wrist camera" /></div>
+      <div class="camera-foot">
+        <div class="mode-switch"></div>
+        <span class="cam-stats">waiting for ROS topic</span>
+      </div>
+    </article>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="/static/main.js"></script>
+</body>
+</html>

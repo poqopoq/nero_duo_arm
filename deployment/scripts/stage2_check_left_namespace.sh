@@ -4,7 +4,9 @@
 set -u
 set +e
 
-WS=/home/a/workspace/dual_nero_ws
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+WS="${NERO_DUO_WS:-${ROOT_DIR}/ros2_ws}"
 LOG=/tmp/nero_left_namespace.log
 set +u
 source /opt/ros/humble/setup.bash

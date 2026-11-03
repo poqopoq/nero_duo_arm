@@ -16,7 +16,7 @@
 安装脚本：
 
 ```bash
-/home/a/workspace/dual_nero_deployment/scripts/install_can_stable_names.sh
+/home/work/nero_duo_arm/deployment/scripts/install_can_stable_names.sh
 ```
 
 ## 2. 已确认
@@ -47,7 +47,7 @@
 启用并只读验证：
 
 ```bash
-cd /home/a/workspace/dual_nero_deployment
+cd /home/work/nero_duo_arm/deployment
 sudo ./scripts/enable_can.sh can_left 1000000
 sudo ./scripts/enable_can.sh can_right 1000000
 ./scripts/check_nero_feedback.sh can_left
