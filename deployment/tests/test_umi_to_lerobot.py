@@ -14,6 +14,7 @@ if str(DEPLOYMENT_DIR) not in sys.path:
 
 from tools.umi_dataset import (  # noqa: E402
     ACTION_NAMES,
+    NERO_ACTION_NAMES,
     CameraSpec,
     RobotSpec,
     UmiInfo,
@@ -85,6 +86,68 @@ def make_umi_zarr(
     root.attrs["fps"] = 30
     meta.attrs["task"] = "pick up the block"
     return root_path
+
+
+def _write_hdf5_data(
+    data,
+    episode_lengths: tuple[int, ...],
+    cameras: int,
+    height: int,
+    width: int,
+) -> None:
+    rng = np.random.default_rng(11)
+    total = sum(episode_lengths)
+    for robot in range(1):
+        data.create_dataset(
+            f"robot{robot}_eef_pos",
+            data=rng.normal(size=(total, 3)).astype(np.float32),
+        )
+        data.create_dataset(
+            f"robot{robot}_eef_rot_axis_angle",
+            data=rng.normal(size=(total, 3)).astype(np.float32),
+        )
+        data.create_dataset(
+            f"robot{robot}_gripper_width",
+            data=rng.uniform(0.0, 0.08, size=(total, 1)).astype(np.float32),
+        )
+    for camera in range(cameras):
+        data.create_dataset(
+            f"camera{camera}_rgb",
+            data=rng.integers(
+                0, 255, size=(total, height, width, 3), dtype=np.uint8),
+        )
+
+
+def make_umi_hdf5(
+    path: Path,
+    episode_lengths: tuple[int, ...] = (5, 4),
+    cameras: int = 1,
+    height: int = 24,
+    width: int = 32,
+    layout: str = "canonical",
+    nested: bool = False,
+) -> Path:
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(path, "w") as file:
+        if layout == "flat":
+            if len(episode_lengths) != 1:
+                raise ValueError("flat HDF5 represents exactly one episode")
+            file.attrs["fps"] = 30
+            file.attrs["task"] = "pick up the block"
+            _write_hdf5_data(file, episode_lengths, cameras, height, width)
+            return path
+
+        parent = file.create_group("session") if nested else file
+        parent.attrs["fps"] = 30
+        data = parent.create_group("data")
+        meta = parent.create_group("meta")
+        meta.create_dataset(
+            "episode_ends",
+            data=np.cumsum(np.asarray(episode_lengths, dtype=np.int64)),
+        )
+        meta.attrs["task"] = "pick up the block"
+        _write_hdf5_data(data, episode_lengths, cameras, height, width)
+    return path
 
 
 def test_shift_state_holds_last_frame() -> None:
@@ -245,6 +308,95 @@ def test_open_umi_reads_zarr_zip(tmp_path: Path) -> None:
     with open_umi(archive) as dataset:
         assert dataset.info.total_frames == 3
         assert len(list(dataset.iter_episode(0))) == 3
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_open_umi_reads_canonical_hdf5(tmp_path: Path, nested: bool) -> None:
+    source = make_umi_hdf5(
+        tmp_path / "dataset.hdf5",
+        episode_lengths=(5, 4),
+        cameras=2,
+        nested=nested,
+    )
+    with open_umi(source) as dataset:
+        assert dataset.info.episode_count == 2
+        assert dataset.info.total_frames == 9
+        assert dataset.info.fps == 30
+        assert dataset.info.task == "pick up the block"
+        assert len(dataset.info.cameras) == 2
+        frames = list(dataset.iter_episode(1, action_offset=1))
+        assert len(frames) == 4
+        assert frames[0].state.shape == (7,)
+        assert frames[0].images["camera0_rgb"].shape == (24, 32, 3)
+        assert np.array_equal(frames[0].action, frames[1].state)
+
+
+def test_open_umi_reads_flat_single_episode_hdf5(tmp_path: Path) -> None:
+    source = make_umi_hdf5(
+        tmp_path / "flat.h5",
+        episode_lengths=(6,),
+        layout="flat",
+    )
+    with open_umi(source) as dataset:
+        assert dataset.info.episode_count == 1
+        assert dataset.info.total_frames == 6
+        assert dataset.info.episode_ends == (6,)
+        assert dataset.info.fps == 30
+        assert dataset.info.task == "pick up the block"
+        assert len(list(dataset.iter_episode(0))) == 6
+
+
+def test_cli_hdf5_dry_run_nero_contract(tmp_path: Path, capsys) -> None:
+    source = make_umi_hdf5(tmp_path / "dataset.h5", episode_lengths=(4,))
+    code = main([str(source), "--dry-run", "--contract", "nero-ros"])
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "output contract: nero-ros" in output
+    assert "robot_type=nero_ros" in output
+    assert "-> observation.images.camera1" in output
+    assert '"observation.images.camera1"' in output
+    assert '"observation.state"' in output
+    assert "ee.rx" in output
+    assert "ee.gripper" in output
+
+
+def test_convert_hdf5_with_nero_contract(tmp_path: Path) -> None:
+    pytest.importorskip("lerobot")
+    source = make_umi_hdf5(
+        tmp_path / "dataset.h5",
+        episode_lengths=(5,),
+    )
+    output = tmp_path / "lerobot" / "umi_hdf5_nero"
+    code = main([
+        str(source),
+        "-o", str(output),
+        "--repo-id", "local/umi_hdf5_nero",
+        "--contract", "nero-ros",
+        "--gripper-min", "0.0",
+        "--gripper-max", "0.09",
+        "--no-videos",
+        "--image-writer-threads", "0",
+    ])
+    assert code == 0
+
+    provenance = json.loads((output / "umi_conversion.json").read_text())
+    assert provenance["robot_type"] == "nero_ros"
+    assert provenance["schema"]["action_names"] == list(NERO_ACTION_NAMES)
+    assert provenance["schema"]["observation_state_written"] is True
+    assert provenance["cameras"][0]["feature"] == "observation.images.camera1"
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    dataset = LeRobotDataset(
+        repo_id="local/umi_hdf5_nero", root=str(output), video_backend="pyav")
+    assert dataset.meta.robot_type == "nero_ros"
+    assert dataset.meta.features["action"]["names"] == list(NERO_ACTION_NAMES)
+    assert dataset.meta.features["observation.state"]["names"] == list(
+        NERO_ACTION_NAMES)
+    sample = dataset[0]
+    assert tuple(sample["action"].shape) == (7,)
+    assert tuple(sample["observation.state"].shape) == (7,)
+    assert tuple(sample["observation.images.camera1"].shape) == (3, 24, 32)
 
 
 def test_cli_dry_run(tmp_path: Path, capsys) -> None:

@@ -1,6 +1,6 @@
 # Dual NERO 项目交接与原生 Ubuntu 迁移
 
-> 更新日期：2026-11-02
+> 更新日期：2026-11-03
 > 当前环境：原生 Ubuntu 22.04.5 + ROS 2 Humble
 > 当前工作区：`/home/work/nero_duo_arm`
 
@@ -177,15 +177,19 @@ URDF 子模块提交：
 - [ ] 数据采集节点
 - [ ] 图像/关节/夹爪/末端位姿同步
 - [ ] ROS 2 bag
-- [x] 单臂 UMI replay-buffer zarr → LeRobot v3 转换器（7D 绝对 EE action，合成数据测试通过）
+- [x] 单臂 UMI replay-buffer zarr/HDF5 → LeRobot v3 转换器（canonical/嵌套/扁平 HDF5，7D 绝对 EE action）
 - [x] 原始双臂 UMI HDF5/MKV → Xense `hdf52lerobot` 路径文档化
-- [ ] 用真实 UMI session 验证转换（当前工作区未发现真实 UMI 数据）
+- [x] 用真实公开 UMI session 验证 zarr 与 canonical HDF5 转换（前 5 集冒烟）
+- [ ] 用 NERO 标定后的真实 session 完成可部署数据转换
 - [ ] π0.5 数据加载验证
 
-UMI 转换说明见 `deployment/docs/10_stage7_umi_lerobot.md`。转换器默认不写
-`observation.state`，`action = [ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz,
-ee.gripper_pos]`，其中夹爪为 0=闭合、1=张开，`action[t]` 为目标帧 `t+1` 的
-绝对位姿。相对 10D rot6d action 在训练 processor 中生成，不写入磁盘。
+UMI 转换说明见 `deployment/docs/10_stage7_umi_lerobot.md`，完整训练/部署流程见
+`deployment/docs/16_umi_nero_e2e.md`。`umi-sroi` 契约保持发布格式：
+`action = [ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos]`，不写
+`observation.state`。本地 NERO 部署使用 `--contract nero-ros`：
+`action/state = [ee.x, ee.y, ee.z, ee.rx, ee.ry, ee.rz, ee.gripper]`，
+图像键 `observation.images.camera1`，`robot_type=nero_ros`。夹爪为 0=闭合、
+1=张开，`action[t]` 默认是 `t+1` 的绝对位姿。
 
 ### 阶段 8：Web 控制台
 

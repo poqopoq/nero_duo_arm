@@ -1,4 +1,4 @@
-"""Read UMI zarr datasets and map them to the EE LeRobot v3 contract.
+"""Read UMI zarr/HDF5 datasets and map them to the EE LeRobot v3 contract.
 
 The canonical UMI replay buffer is a zarr group with this layout::
 
@@ -13,9 +13,11 @@ absolute 7-D action named ``ee.x .. ee.gripper_pos`` and no on-disk
 ``observation.state``.  ``action[t]`` is the pose at ``t + 1`` and the final
 frame repeats the final pose.
 
-This module deliberately does not import ``lerobot`` at import time.  The
-reader can therefore be exercised on its own, and the converter imports
-LeRobot only after the source has been validated.
+The same canonical layout is accepted from zarr or HDF5.  HDF5 additionally
+accepts one enclosing group and a flat single-episode file.  This module
+deliberately does not import ``lerobot`` at import time.  The reader can
+therefore be exercised on its own, and the converter imports LeRobot only after
+the source has been validated.
 """
 
 from __future__ import annotations
@@ -39,6 +41,16 @@ ACTION_NAMES = (
     "ee.wy",
     "ee.wz",
     "ee.gripper_pos",
+)
+
+NERO_ACTION_NAMES = (
+    "ee.x",
+    "ee.y",
+    "ee.z",
+    "ee.rx",
+    "ee.ry",
+    "ee.rz",
+    "ee.gripper",
 )
 
 
@@ -105,7 +117,7 @@ class EpisodeFrame:
 
 
 class UmiDataset:
-    """An opened UMI zarr source plus validated schema metadata."""
+    """An opened UMI zarr/HDF5 source plus validated schema metadata."""
 
     def __init__(self, root, info: UmiInfo, store=None):
         self._root = root
@@ -539,6 +551,8 @@ def build_lerobot_features(
     use_videos: bool = True,
     resize: tuple[int, int] | None = None,
     include_state: bool = False,
+    state_names: Sequence[str] = ACTION_NAMES,
+    camera_features: Mapping[str, str] | None = None,
 ) -> dict[str, dict]:
     """Build the EE LeRobot v3 feature dictionary for a UMI dataset.
 
@@ -547,7 +561,7 @@ def build_lerobot_features(
     later builds relative 10-D chunks in the training processor.
     """
     _validate_ee_contract(info)
-    names = list(ACTION_NAMES)
+    names = list(state_names)
     features: dict[str, dict] = {
         "action": {
             "dtype": "float32",
@@ -565,7 +579,12 @@ def build_lerobot_features(
         height, width = camera.shape[0], camera.shape[1]
         if resize is not None:
             width, height = resize
-        features[camera.feature] = {
+        feature = (
+            camera_features[camera.key]
+            if camera_features is not None
+            else camera.feature
+        )
+        features[feature] = {
             "dtype": "video" if use_videos else "image",
             "shape": (height, width, 3),
             "names": ["height", "width", "channels"],
@@ -637,12 +656,15 @@ def open_umi(
     include_mirror: bool = False,
     robot_index: int | None = None,
 ) -> UmiDataset:
-    """Open and validate a UMI zarr directory or ``.zarr.zip`` file."""
+    """Open and validate a UMI zarr or HDF5 replay buffer."""
     source_path = Path(source).expanduser().resolve()
     if not source_path.exists():
         raise UmiError(f"UMI source does not exist: {source_path}")
 
-    root, store = _open_root(source_path)
+    if source_path.suffix.lower() in (".h5", ".hdf5"):
+        root, store = _open_hdf5_root(source_path)
+    else:
+        root, store = _open_root(source_path)
     try:
         if "data" not in root or "meta" not in root:
             raise UmiError(
@@ -729,6 +751,164 @@ def _open_root(source: Path):
         if len(groups) == 1:
             root = root[groups[0]]
     return root, store
+
+
+class _NumpyArray:
+    """Minimal array view used to synthesize ``meta/episode_ends``."""
+
+    def __init__(self, values: np.ndarray):
+        self._values = np.asarray(values)
+        self.shape = self._values.shape
+        self.dtype = self._values.dtype
+
+    def __getitem__(self, item):
+        return self._values[item]
+
+
+class _Hdf5DataView:
+    """Expose root-level HDF5 datasets as the canonical ``data`` group."""
+
+    def __init__(self, file, keys: Sequence[str]):
+        self._file = file
+        self._keys = tuple(keys)
+
+    def keys(self):
+        return self._keys
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._keys
+
+    def __getitem__(self, key: str):
+        return self._file[key]
+
+
+class _Hdf5MetaView:
+    """Provide episode metadata for a flat, single-episode HDF5 file."""
+
+    def __init__(self, file, total_frames: int):
+        self._file = file
+        self._total_frames = int(total_frames)
+
+    @property
+    def attrs(self):
+        return self._file.attrs
+
+    def keys(self):
+        return ("episode_ends",)
+
+    def __contains__(self, key: str) -> bool:
+        return key == "episode_ends"
+
+    def __getitem__(self, key: str):
+        if key != "episode_ends":
+            raise KeyError(key)
+        if "episode_ends" in self._file:
+            return self._file["episode_ends"]
+        return _NumpyArray(
+            np.asarray([self._total_frames], dtype=np.int64))
+
+
+class _Hdf5RootView:
+    """Map canonical and flat HDF5 layouts onto the zarr root interface."""
+
+    def __init__(self, file, data, meta, attrs_source=None):
+        self._file = file
+        self._data = data
+        self._meta = meta
+        self._attrs_source = attrs_source
+
+    @property
+    def attrs(self):
+        attrs = dict(self._file.attrs)
+        if self._attrs_source is not None:
+            attrs.update(dict(self._attrs_source.attrs))
+        return attrs
+
+    def __contains__(self, key: str) -> bool:
+        return key in ("data", "meta")
+
+    def __getitem__(self, key: str):
+        if key == "data":
+            return self._data
+        if key == "meta":
+            return self._meta
+        raise KeyError(key)
+
+    def group_keys(self):
+        return ("data", "meta")
+
+    def close(self) -> None:
+        self._file.close()
+
+
+def _open_hdf5_root(source: Path):
+    try:
+        import h5py
+    except ImportError as exc:  # pragma: no cover - dependency error path
+        raise UmiError(
+            "HDF5 conversion requires h5py. Run "
+            "deployment/scripts/install_umi_lerobot_env.sh first."
+        ) from exc
+
+    try:
+        file = h5py.File(source, mode="r")
+    except OSError as exc:
+        raise UmiError(f"cannot open HDF5 source {source}: {exc}") from exc
+
+    try:
+        if "data" in file:
+            data = file["data"]
+            meta = file["meta"] if "meta" in file else _synth_meta(file, data)
+            view = _Hdf5RootView(file, data, meta)
+            return view, view
+
+        nested = [
+            name for name in file.keys()
+            if isinstance(file[name], h5py.Group)
+            and "data" in file[name]
+        ]
+        if len(nested) == 1:
+            group = file[nested[0]]
+            data = group["data"]
+            meta = group["meta"] if "meta" in group else _synth_meta(file, data)
+            view = _Hdf5RootView(file, data, meta, attrs_source=group)
+            return view, view
+
+        keys = _flat_umi_keys(file)
+        if not keys:
+            raise UmiError(
+                f"{source} is not a supported UMI HDF5 file. Expected "
+                "data/robot0_eef_pos + data/camera0_rgb + meta/episode_ends, "
+                "or those arrays at the root. For Xense per-stream HDF5/MKV "
+                "recordings use Xense's hdf52lerobot.")
+        data = _Hdf5DataView(file, keys)
+        meta = file["meta"] if "meta" in file else _synth_meta(file, data)
+        view = _Hdf5RootView(file, data, meta)
+        return view, view
+    except Exception:
+        file.close()
+        raise
+
+
+def _flat_umi_keys(file) -> list[str]:
+    """Return root-level datasets that can form a flat UMI episode."""
+
+    ignored = {"episode_ends", "fps", "frame_rate", "task"}
+    keys = []
+    for key in file.keys():
+        node = file[key]
+        if key in ignored or not hasattr(node, "shape"):
+            continue
+        keys.append(key)
+    return sorted(keys)
+
+
+def _synth_meta(file, data):
+    for key in data.keys():
+        shape = getattr(data[key], "shape", ())
+        if len(shape) > 0:
+            return _Hdf5MetaView(file, int(shape[0]))
+    raise UmiError("HDF5 source has no non-empty data arrays")
 
 
 def _read_episode_ends(meta) -> np.ndarray:
@@ -968,7 +1148,12 @@ def _resolve_task(
     return None
 
 
-def summarize(info: UmiInfo, resize: tuple[int, int] | None = None) -> str:
+def summarize(
+    info: UmiInfo,
+    resize: tuple[int, int] | None = None,
+    action_names: Sequence[str] = ACTION_NAMES,
+    camera_features: Mapping[str, str] | None = None,
+) -> str:
     lines = [
         f"source: {info.source}",
         f"episodes: {info.episode_count}",
@@ -976,7 +1161,7 @@ def summarize(info: UmiInfo, resize: tuple[int, int] | None = None) -> str:
         f"fps: {info.fps if info.fps is not None else '(not set; pass --fps)'}",
         f"task: {info.task if info.task else '(not set; pass --task)'}",
         f"state_dim: {info.state_dim}",
-        f"action: {list(ACTION_NAMES)}",
+        f"action: {list(action_names)}",
     ]
     for robot in info.robots:
         gripper = robot.gripper_key or "no gripper"
@@ -987,9 +1172,14 @@ def summarize(info: UmiInfo, resize: tuple[int, int] | None = None) -> str:
         height, width = camera.shape[0], camera.shape[1]
         if resize is not None:
             width, height = resize
+        feature = (
+            camera_features.get(camera.key, camera.feature)
+            if camera_features is not None
+            else camera.feature
+        )
         lines.append(
             f"camera {camera.key}: source {camera.shape[1]}x{camera.shape[0]}, "
-            f"output {width}x{height} -> {camera.feature}")
+            f"output {width}x{height} -> {feature}")
     lines.append("episode ranges: " + ", ".join(
         f"{index}:{start}-{end}"
         for index, (start, end) in enumerate(info.episode_ranges)))

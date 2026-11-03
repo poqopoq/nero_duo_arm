@@ -78,6 +78,7 @@ deployment/docs/12_usage_and_commands.md
 deployment/docs/13_stage9_vla_smolvla.md
 deployment/docs/14_stage10_vla_motion.md
 deployment/docs/15_stage11_vla_bimanual_eval.md
+deployment/docs/16_umi_nero_e2e.md
 ```
 
 ## Web dashboard

@@ -735,8 +735,9 @@ cd /home/work/nero_duo_arm
 
 ## 9. UMI 数据转换到 LeRobot v3
 
-该阶段只转换数据，不需要机械臂运动。LeRobot 与 ROS 使用不同的 Python
-环境，LeRobot 安装到 `/home/work/.venvs/umi_lerobot`。
+该阶段只转换数据，不需要机械臂运动。输入支持 canonical UMI zarr
+（`.zarr`/`.zarr.zip`）和 HDF5（`.h5`/`.hdf5`）。LeRobot 与 ROS 使用不同的
+Python 环境，转换环境安装到 `/home/work/.venvs/umi_lerobot`。
 
 安装或重建环境：
 
@@ -753,8 +754,19 @@ cd /home/work/nero_duo_arm
   /path/to/umi_session.zarr.zip \
   --fps 30 \
   --task "pick up the block" \
+  --contract nero-ros \
   --dry-run
 ```
+
+HDF5 只需替换输入路径，例如 `/path/to/umi_session.h5`。支持三种布局：
+
+- canonical：`data/...` + `meta/episode_ends`；
+- 单一外层 group：`session/data/...` + `session/meta/...`；
+- 扁平单集：根目录直接包含 `robot0_eef_pos`、`robot0_eef_rot_axis_angle`、
+  `robot0_gripper_width`、`camera0_rgb`，没有 `episode_ends` 时按单集处理。
+
+Xense 原始逐流 HDF5/MKV、每个 episode 一个任意 group 的 HDF5 不在本转换器
+范围内；双臂原始数据继续使用 Xense `hdf52lerobot`。
 
 转换：
 
@@ -766,6 +778,7 @@ cd /home/work/nero_duo_arm
   --repo-id local/umi_pick \
   --fps 30 \
   --task "pick up the block" \
+  --contract nero-ros \
   --gripper-min 0.0 \
   --gripper-max 0.09 \
   --pose-transform /path/to/T_robot_from_umi.json
@@ -783,19 +796,37 @@ cd /home/work/nero_duo_arm
 | `--no-videos` | 保存逐帧图像而不是 MP4 |
 | `--resize 224x224` | 训练前缩放图像 |
 | `--overwrite` | 把已有输出目录移到时间戳 `.bak` 后重写 |
-| `--include-state` | 额外写入 `observation.state`；默认 UMI 契约不写 |
+| `--contract nero-ros` | 输出 NERO 本地插件契约：7D state/action、`camera1`、`robot_type=nero_ros` |
+| `--contract umi-sroi` | 保持发布 UMI/SROI 契约；默认值 |
+| `--image-key camera1` | 单相机时改名；`nero-ros` 默认已是 `camera1` |
+| `--include-state` / `--no-state` | 显式覆盖契约的 state 写入行为 |
 
-当前转换输出约定：
+UMI/SROI 默认输出约定：
 
 ```text
 action = [ee.x, ee.y, ee.z, ee.wx, ee.wy, ee.wz, ee.gripper_pos]
 ```
 
+本地 NERO 部署使用 `--contract nero-ros` 时输出：
+
+```text
+observation.state = [ee.x, ee.y, ee.z, ee.rx, ee.ry, ee.rz, ee.gripper]
+action            = [ee.x, ee.y, ee.z, ee.rx, ee.ry, ee.rz, ee.gripper]
+observation.images.camera1
+robot_type        = nero_ros
+```
+
 位置单位为米，旋转为轴角/旋转向量，夹爪 `0=闭合`、`1=张开`；
 `action[t]` 默认目标帧为 `t+1`。
 
+公开样本 `ZIMBOT/umi-3d-dataset-curtain` 的 zarr 与 canonical HDF5 均已实际
+转换验证：5 集、398 帧，`action/state` 为 7D，图像键为 `camera1`。该样本
+没有 NERO 坐标标定，只能验证数据链路，不能直接上真机。完整的“网络数据 →
+转换 → GPU 训练 → 本地部署”流程见
+[UMI → SmolVLA → NERO 端到端流程](16_umi_nero_e2e.md)。
+
 当前仓库已实现 LeRobot `nero_ros` 插件和 VLA 绝对末端动作到 MoveIt IK /
-短轨迹的 ROS bridge；SmolVLA 训练命令、真实 checkpoint 推理验收和夹爪命令
+短轨迹的 ROS bridge；真实 checkpoint 整链路、夹爪命令和 UMI→NERO 坐标标定
 仍未完成。运动执行边界和上机步骤见
 [阶段 10：VLA 动作到 NERO 运动执行](14_stage10_vla_motion.md)。
 

@@ -42,10 +42,11 @@ echo "[3/4] Installing CPU PyTorch"
 "${PIP}" install --index-url "${TORCH_INDEX}" \
   "torch>=2.2,<2.11" "torchvision>=0.21,<0.26"
 
-echo "[4/4] Installing LeRobot 0.4.4 and UMI zarr dependencies"
+echo "[4/4] Installing LeRobot 0.4.4 and UMI zarr/HDF5 dependencies"
 "${PIP}" install \
   "lerobot==0.4.4" \
   "zarr<3" \
+  "h5py>=3.10" \
   "imagecodecs" \
   "pytest"
 
@@ -53,6 +54,7 @@ echo
 echo "Verifying imports:"
 "${PY}" - <<'PY'
 import av
+import h5py
 import imagecodecs
 import lerobot
 import pyarrow
@@ -64,6 +66,7 @@ print(f"  torch={torch.__version__}")
 print(f"  zarr={zarr.__version__}")
 print(f"  pyarrow={pyarrow.__version__}")
 print(f"  av={av.__version__}")
+print(f"  h5py={h5py.__version__}")
 print(f"  imagecodecs={imagecodecs.__version__}")
 if not getattr(imagecodecs, "JPEGXL", False):
     print("  warning: imagecodecs has no JPEG XL support")
@@ -82,3 +85,6 @@ echo "    /path/to/dataset.zarr.zip -o ~/datasets/lerobot/umi_pick \\"
 echo "    --repo-id local/umi_pick --fps 30 --task 'pick up the block' \\"
 echo "    --gripper-min 0.0 --gripper-max 0.09 \\"
 echo "    --pose-transform /path/to/T_robot_from_umi.json"
+echo
+echo "Canonical, nested, and flat HDF5 sources are accepted too (.h5/.hdf5)."
+echo "For direct NERO deployment metadata use: --contract nero-ros"

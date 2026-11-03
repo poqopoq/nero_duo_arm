@@ -5,6 +5,10 @@
 桥接。默认仍是 `execution_mode:=dry_run`；真实运动需要显式双门控，详见
 [阶段 10](14_stage10_vla_motion.md)。
 
+> 版本注意：本文命令基于本地 LeRobot 0.6.1 的
+> `lerobot.async_inference.*`。工作区中的 LeRobot 0.6.2 已改为新的 remote
+> inference API；升级时必须同步迁移 policy server 和 robot client，不能混用。
+
 双臂 20-D rot6d、三相机和 `lerobot-rollout` 实机评测请使用
 [阶段 11](15_stage11_vla_bimanual_eval.md)。
 
@@ -191,10 +195,12 @@ env -u PYTHONPATH \
   --task="pick up the block"
 ```
 
-如果用的是当前 `umi_to_lerobot.py` 的默认图像键
-`observation.images.camera`，则把 bridge 的 `image_key` 和客户端的
-`--robot.camera_key` 都改为 `camera`，或者更新转换器输出 `camera1`。训练集和
-推理端的键名、state 维度必须完全一致。
+训练数据推荐直接用 `umi_to_lerobot.py --contract nero-ros` 生成；它会输出
+`observation.images.camera1`、7D `observation.state/action` 和
+`robot_type=nero_ros`，与这里的 bridge 和插件默认值一致。如果使用
+`umi-sroi` 默认契约，则图像键是 `observation.images.camera`，需要把 bridge
+的 `image_key` 和客户端 `--robot.camera_key` 同步改为 `camera`。训练集和推理
+端的键名、state 维度必须完全一致。
 
 ## 7. 训练数据要求
 
@@ -207,13 +213,47 @@ action                     float32[7]
 task                       language instruction
 ```
 
-当前 UMI 转换器的发布契约默认只有 `observation.images.camera` 和 7D
-`action`，没有 `observation.state`。正式训练前需要：
+使用 UMI 数据训练时，转换命令必须加 `--contract nero-ros`：
 
-1. 用转换器生成与上述一致的 state 列（绝对 EE TCP + gripper）。
-2. 统一图像键名。
-3. 检查 `action[t] = state[t+1]`。
-4. 核对 UMI 坐标到 NERO 左臂基座坐标的固定变换。
+```bash
+/home/work/.venvs/umi_lerobot/bin/python \
+  deployment/scripts/umi_to_lerobot.py \
+  /path/to/umi_session.zarr.zip \
+  -o /home/work/datasets/lerobot/umi_nero \
+  --repo-id local/umi_nero \
+  --fps 30 \
+  --task "pick up the block" \
+  --contract nero-ros \
+  --gripper-min 0.0 \
+  --gripper-max 0.09 \
+  --pose-transform /path/to/T_robot_from_umi.json
+```
+
+正式训练前检查：
+
+1. `info.json` 中 `action` 和 `observation.state` 都是 7D，名称与
+   `STATE_NAMES` 一致。
+2. 图像键是 `observation.images.camera1`，尺寸与推理相机一致。
+3. `action[t] = state[t+1]`。
+4. UMI 坐标已经用实测 `T_robot_from_umi` 变换到 NERO 左臂基座坐标系。
+
+GPU 服务器上的 SmolVLA 微调示例：
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=local/umi_nero \
+  --dataset.root=/data/lerobot/umi_nero \
+  --policy.repo_id=${HF_USER}/nero_umi_smolvla \
+  --batch_size=32 \
+  --steps=20000 \
+  --output_dir=/data/checkpoints/nero_umi_smolvla \
+  --job_name=nero_umi_smolvla \
+  --policy.device=cuda
+```
+
+`batch_size`/`steps` 需要按 GPU 显存和数据量调整。完整的上传、训练和部署
+顺序见 [UMI → SmolVLA → NERO 端到端流程](16_umi_nero_e2e.md)。
 
 ## 8. 实机运动桥
 

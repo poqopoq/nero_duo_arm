@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a single-arm UMI zarr replay buffer into a LeRobot v3 dataset.
+"""Convert a single-arm UMI zarr/HDF5 replay buffer into LeRobot v3.
 
 UMI is a handheld data-collection system.  Its replay buffer contains camera
 images, end-effector position, end-effector axis-angle rotation, and gripper
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import time
@@ -24,6 +25,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from tools.umi_dataset import (  # noqa: E402
         ACTION_NAMES,
+        NERO_ACTION_NAMES,
         UmiError,
         build_lerobot_features,
         load_pose_transform,
@@ -37,6 +39,7 @@ if __package__ in (None, ""):
 else:
     from .umi_dataset import (
         ACTION_NAMES,
+        NERO_ACTION_NAMES,
         UmiError,
         build_lerobot_features,
         load_pose_transform,
@@ -49,15 +52,31 @@ else:
     )
 
 
+CONTRACTS = {
+    "umi-sroi": {
+        "action_names": ACTION_NAMES,
+        "robot_type": "so100",
+        "image_key": "camera",
+        "include_state": False,
+    },
+    "nero-ros": {
+        "action_names": NERO_ACTION_NAMES,
+        "robot_type": "nero_ros",
+        "image_key": "camera1",
+        "include_state": True,
+    },
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Convert a UMI zarr replay buffer (camera + eef pose + gripper "
-            "width) to a LeRobot v3 dataset."),
+            "Convert a UMI zarr or HDF5 replay buffer (camera + eef pose + "
+            "gripper width) to a LeRobot v3 dataset."),
     )
     parser.add_argument(
         "source",
-        help="UMI dataset directory or .zarr.zip archive",
+        help="UMI zarr directory/.zarr.zip, or canonical/flat .h5/.hdf5 file",
     )
     parser.add_argument(
         "-o", "--output",
@@ -110,11 +129,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="UMI robotN to convert. Required only when the source contains "
              "multiple robots.",
     )
-    parser.add_argument(
+    state_group = parser.add_mutually_exclusive_group()
+    state_group.add_argument(
         "--include-state",
+        dest="include_state",
         action="store_true",
+        default=None,
         help="Also write observation.state. The published UMI/SROI contract "
              "omits it; leave this off unless a downstream policy requires it.",
+    )
+    state_group.add_argument(
+        "--no-state",
+        dest="include_state",
+        action="store_false",
+        help="Omit observation.state even when the selected contract normally "
+             "writes it.",
     )
     parser.add_argument(
         "--pose-transform",
@@ -145,8 +174,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--robot-type",
-        default="so100",
-        help="LeRobot robot_type metadata. Default: so100 (matches UMI/SROI).",
+        default=None,
+        help="LeRobot robot_type metadata. Default depends on --contract.",
+    )
+    parser.add_argument(
+        "--contract",
+        choices=tuple(CONTRACTS),
+        default="umi-sroi",
+        help="Output feature contract. 'umi-sroi' keeps the published 7-D "
+             "action and camera feature; 'nero-ros' uses ee.rx/ry/rz + "
+             "ee.gripper, camera1, observation.state, and robot_type nero_ros.",
+    )
+    parser.add_argument(
+        "--image-key",
+        default=None,
+        help="Feature suffix for a single selected camera. Defaults to "
+             "'camera' for umi-sroi and 'camera1' for nero-ros.",
     )
     parser.add_argument(
         "--no-videos",
@@ -170,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--camera",
         action="append",
         default=None,
-        help="Camera zarr key to include (repeatable). Default: each "
+        help="Source camera dataset key to include (repeatable). Default: each "
              "cameraN_rgb, excluding _mirror_crop.",
     )
     parser.add_argument(
@@ -230,6 +273,7 @@ def _run(args: argparse.Namespace) -> int:
     resize = parse_resize(args.resize)
     task_map = load_task_map(args.task_file)
     pose_transform = load_pose_transform(args.pose_transform)
+    action_names, robot_type, include_state, image_key = _resolve_contract(args)
 
     with open_umi(
         args.source,
@@ -245,7 +289,17 @@ def _run(args: argparse.Namespace) -> int:
         observed_gripper = observed_gripper_range(umi, selected)
 
         print("[UMI]")
-        print(summarize(info, resize))
+        camera_features = _camera_features(info, image_key)
+        print(summarize(
+            info,
+            resize,
+            action_names=action_names,
+            camera_features=camera_features,
+        ))
+        print(
+            f"output contract: {args.contract} "
+            f"(state={include_state}, image_key={image_key}, "
+            f"robot_type={robot_type})")
         print(f"selected episodes: {selected}")
         print(f"action offset: {args.action_offset}")
         print(
@@ -258,7 +312,9 @@ def _run(args: argparse.Namespace) -> int:
             info,
             use_videos=not args.no_videos,
             resize=resize,
-            include_state=args.include_state,
+            include_state=include_state,
+            state_names=action_names,
+            camera_features=camera_features,
         )
         print("[LEROBOT] features:")
         print(json.dumps(features, indent=2))
@@ -304,7 +360,7 @@ def _run(args: argparse.Namespace) -> int:
             "fps": int(info.fps),
             "features": features,
             "root": str(output),
-            "robot_type": args.robot_type,
+            "robot_type": robot_type,
             "use_videos": not args.no_videos,
         }
         if not args.no_videos:
@@ -324,7 +380,8 @@ def _run(args: argparse.Namespace) -> int:
                     args.action_offset,
                     gripper_range,
                     pose_transform,
-                    include_state=args.include_state,
+                    include_state=include_state,
+                    camera_features=camera_features,
                     parallel_encoding=args.parallel_encoding,
                 )
         except Exception:
@@ -347,12 +404,55 @@ def _run(args: argparse.Namespace) -> int:
             gripper_range,
             observed_gripper,
             pose_transform,
+            action_names=action_names,
+            robot_type=robot_type,
+            include_state=include_state,
+            camera_features=camera_features,
         )
         print(f"[OK] wrote LeRobot dataset: {output}")
 
         if not args.no_verify:
-            _verify(output, args.repo_id)
+            _verify(
+                output,
+                args.repo_id,
+                action_names=action_names,
+                camera_features=camera_features,
+                include_state=include_state,
+            )
         return 0
+
+
+def _resolve_contract(args: argparse.Namespace):
+    defaults = CONTRACTS[args.contract]
+    include_state = (
+        defaults["include_state"]
+        if args.include_state is None
+        else bool(args.include_state)
+    )
+    image_key = args.image_key or defaults["image_key"]
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", image_key):
+        raise UmiError(
+            "--image-key must start with a letter and contain only letters, "
+            "digits, and underscores")
+    robot_type = args.robot_type or defaults["robot_type"]
+    return (
+        tuple(defaults["action_names"]),
+        str(robot_type),
+        include_state,
+        image_key,
+    )
+
+
+def _camera_features(info, image_key: str) -> dict[str, str]:
+    if len(info.cameras) == 1:
+        return {
+            info.cameras[0].key: f"observation.images.{image_key}",
+        }
+    if image_key != CONTRACTS["umi-sroi"]["image_key"]:
+        raise UmiError(
+            "--image-key is only supported with one selected camera; "
+            f"found {len(info.cameras)}. Select one with --camera.")
+    return {camera.key: camera.feature for camera in info.cameras}
 
 
 def _resolve_gripper_range(
@@ -435,6 +535,7 @@ def _convert_episode(
     gripper_range: tuple[float, float],
     pose_transform: np.ndarray | None,
     include_state: bool,
+    camera_features: dict[str, str],
     parallel_encoding: bool,
 ) -> None:
     start, end = umi.info.episode_ranges[episode_index]
@@ -458,7 +559,7 @@ def _convert_episode(
             payload["observation.state"] = np.asarray(
                 frame.state, dtype=np.float32)
         for camera in umi.info.cameras:
-            payload[camera.feature] = frame.images[camera.key]
+            payload[camera_features[camera.key]] = frame.images[camera.key]
         dataset.add_frame(payload)
         written += 1
         if written % 500 == 0:
@@ -479,6 +580,10 @@ def _write_metadata(
     gripper_range: tuple[float, float],
     observed_gripper: tuple[float, float],
     pose_transform: np.ndarray | None,
+    action_names: tuple[str, ...],
+    robot_type: str,
+    include_state: bool,
+    camera_features: dict[str, str],
 ) -> None:
     frame_count = sum(
         info.episode_ranges[index][1] - info.episode_ranges[index][0]
@@ -487,8 +592,8 @@ def _write_metadata(
     gripper_manifest = {
         "schema_version": 1,
         "feature": "action",
-        "index": len(ACTION_NAMES) - 1,
-        "name": ACTION_NAMES[-1],
+        "index": len(action_names) - 1,
+        "name": action_names[-1],
         "raw_units": "m",
         "value_convention": {"closed": 0.0, "open": 1.0},
         "normalization": {
@@ -521,13 +626,13 @@ def _write_metadata(
         "source": str(info.source),
         "repo_id": args.repo_id,
         "fps": info.fps,
-        "robot_type": args.robot_type,
+        "robot_type": robot_type,
         "schema": {
-            "action_names": list(ACTION_NAMES),
+            "action_names": list(action_names),
             "action_convention": (
                 "absolute end-effector pose at t+action_offset; final frame "
                 "repeats the final pose"),
-            "observation_state_written": bool(args.include_state),
+            "observation_state_written": bool(include_state),
             "gripper_normalized": True,
             "gripper_convention": {"closed": 0.0, "open": 1.0},
         },
@@ -554,7 +659,7 @@ def _write_metadata(
         "cameras": [
             {
                 "zarr_key": camera.key,
-                "feature": camera.feature,
+                "feature": camera_features[camera.key],
                 "source_shape": list(camera.shape),
             }
             for camera in info.cameras
@@ -575,7 +680,13 @@ def _write_metadata(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _verify(output: Path, repo_id: str) -> None:
+def _verify(
+    output: Path,
+    repo_id: str,
+    action_names: tuple[str, ...],
+    camera_features: dict[str, str],
+    include_state: bool,
+) -> None:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     dataset = LeRobotDataset(
@@ -588,6 +699,21 @@ def _verify(output: Path, repo_id: str) -> None:
         f"total_episodes={dataset.meta.total_episodes} "
         f"total_frames={dataset.meta.total_frames} "
         f"fps={dataset.meta.fps}")
+    features = dataset.meta.features
+    if "action" not in features:
+        raise UmiError("converted dataset has no action feature")
+    actual_names = features["action"].get("names")
+    if actual_names is not None and tuple(actual_names) != tuple(action_names):
+        raise UmiError(
+            f"converted action names are {actual_names}; "
+            f"expected {list(action_names)}")
+    if include_state and "observation.state" not in features:
+        raise UmiError("converted dataset has no observation.state feature")
+    if not include_state and "observation.state" in features:
+        raise UmiError("converted dataset unexpectedly contains observation.state")
+    for feature in camera_features.values():
+        if feature not in features:
+            raise UmiError(f"converted dataset is missing {feature}")
     if len(dataset) == 0:
         raise UmiError("converted dataset is empty")
     sample = dataset[0]

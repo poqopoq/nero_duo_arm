@@ -13,12 +13,13 @@
 - [阶段 4：三台 RealSense 接入](docs/06_stage4_realsense_setup.md) — 暂停，等待新 USB Hub
 - [阶段 5：MoveIt 2 双臂规划](docs/07_stage5_moveit_plan.md) — 规划、执行桥、真实轨迹取消联锁、单臂/双臂真机执行及稳定失能 park pose 通过；夹爪规划组待定
 - [阶段 6：相机外参标定框架](docs/08_stage6_camera_calibration.md) — 12×9 棋盘格采集/求解/TF 发布框架已建立
-- [阶段 7：UMI 数据转 LeRobot v3](docs/10_stage7_umi_lerobot.md) — 单臂 UMI zarr 转换器与 Xense 原始 HDF5/MKV 路径说明
+- [阶段 7：UMI 数据转 LeRobot v3](docs/10_stage7_umi_lerobot.md) — 单臂 UMI zarr/HDF5 转换器、`nero-ros` 契约与 Xense 原始 HDF5/MKV 路径说明
 - [阶段 8：双臂 Web 控制台](docs/11_stage8_webapp.md) — MoveIt `/move_action` 规划执行、3D 模型、三路相机与安全联锁；相机点云防碰撞待接入
 - [完整使用手册与命令速查](docs/12_usage_and_commands.md) — Web 控制台逐项说明、REST/ROS 命令、相机标定、UMI 转换和故障排查
 - [阶段 9：SmolVLA VLA 部署链路](docs/13_stage9_vla_smolvla.md) — ROS bridge + `lerobot_robot_nero` 闭环，观测、动作契约与策略客户端
 - [阶段 10：VLA 动作到 NERO 运动执行](docs/14_stage10_vla_motion.md) — `dry_run/ik_dry_run/trajectory` 三模式、MoveIt IK、短轨迹异步执行与安全门控
 - [阶段 11：双臂 VLA 真机评测](docs/15_stage11_vla_bimanual_eval.md) — 20-D rot6d / 14-D axis-angle、双臂原子 IK、三相机、`lerobot-rollout` 评测与真机门控
+- [UMI → SmolVLA → NERO 端到端流程](docs/16_umi_nero_e2e.md) — 公开数据下载、zarr/HDF5 转换、服务器训练、本地分阶段部署与坐标标定
 
 ## 运行阶段 0 检查
 
