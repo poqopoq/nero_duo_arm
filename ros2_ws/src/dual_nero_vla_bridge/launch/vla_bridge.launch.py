@@ -9,6 +9,10 @@ def generate_launch_description():
         DeclareLaunchArgument('socket_path', default_value='/tmp/nero_vla_bridge.sock'),
         DeclareLaunchArgument('side', default_value='left'),
         DeclareLaunchArgument('image_topic', default_value='/camera_scene/color/image_raw'),
+        DeclareLaunchArgument(
+            'image_compressed_topic',
+            default_value='/camera_scene/color/image_raw/compressed'),
+        DeclareLaunchArgument('use_compressed_image', default_value='true'),
         DeclareLaunchArgument('image_key', default_value='camera1'),
         DeclareLaunchArgument('execution_mode', default_value='dry_run'),
         DeclareLaunchArgument('allow_real_motion', default_value='false'),
@@ -34,6 +38,10 @@ def generate_launch_description():
                 'socket_path': LaunchConfiguration('socket_path'),
                 'side': LaunchConfiguration('side'),
                 'image_topic': LaunchConfiguration('image_topic'),
+                'image_compressed_topic': LaunchConfiguration(
+                    'image_compressed_topic'),
+                'use_compressed_image': LaunchConfiguration(
+                    'use_compressed_image'),
                 'image_key': LaunchConfiguration('image_key'),
                 'execution_mode': LaunchConfiguration('execution_mode'),
                 'allow_real_motion': LaunchConfiguration('allow_real_motion'),

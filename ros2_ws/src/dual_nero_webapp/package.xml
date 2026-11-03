@@ -10,6 +10,7 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>agx_arm_description</exec_depend>
   <exec_depend>dual_nero_cameras</exec_depend>
+  <exec_depend>dual_nero_camera_relay</exec_depend>
   <exec_depend>dual_nero_control</exec_depend>
   <exec_depend>dual_nero_description</exec_depend>
   <exec_depend>dual_nero_moveit_config</exec_depend>

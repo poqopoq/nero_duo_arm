@@ -34,10 +34,11 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Image, JointState
+from sensor_msgs.msg import CompressedImage, Image, JointState
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from .image_utils import jpeg_size
 from .protocol import ProtocolError, recv_frame, send_frame
 
 STATE_SIZE = 7
@@ -143,6 +144,10 @@ class NeroVlaBridge(Node):
         self.declare_parameter('tcp_topic', '')
         self.declare_parameter('joint_state_topic', '')
         self.declare_parameter('image_topic', '/camera_scene/color/image_raw')
+        self.declare_parameter(
+            'image_compressed_topic',
+            '/camera_scene/color/image_raw/compressed')
+        self.declare_parameter('use_compressed_image', True)
         self.declare_parameter('image_key', 'camera1')
         self.declare_parameter('jpeg_quality', 90)
         self.declare_parameter('observation_timeout_sec', 0.75)
@@ -184,6 +189,10 @@ class NeroVlaBridge(Node):
             or f'/{self.side}/feedback/joint_states'
         )
         self.image_topic = str(self.get_parameter('image_topic').value)
+        self.image_compressed_topic = str(
+            self.get_parameter('image_compressed_topic').value)
+        self.use_compressed_image = bool(
+            self.get_parameter('use_compressed_image').value)
         self.image_key = str(self.get_parameter('image_key').value)
         self.jpeg_quality = int(self.get_parameter('jpeg_quality').value)
         self.observation_timeout = float(self.get_parameter('observation_timeout_sec').value)
@@ -279,7 +288,16 @@ class NeroVlaBridge(Node):
         )
         self.create_subscription(PoseStamped, self.tcp_topic, self._tcp_cb, topic_qos)
         self.create_subscription(JointState, self.joint_state_topic, self._joint_cb, topic_qos)
-        self.create_subscription(Image, self.image_topic, self._image_cb, image_qos)
+        if self.use_compressed_image:
+            self.create_subscription(
+                CompressedImage,
+                self.image_compressed_topic,
+                self._compressed_image_cb,
+                image_qos,
+            )
+        else:
+            self.create_subscription(
+                Image, self.image_topic, self._image_cb, image_qos)
 
         self._stop_clients = {
             self.side: self.create_client(Empty, f'/{self.side}/emergency_stop'),
@@ -304,7 +322,8 @@ class NeroVlaBridge(Node):
         self.get_logger().info(
             f'VLA bridge listening at {self.socket_path}; side={self.side}, '
             f'execution_mode={self.execution_mode}, tcp={self.tcp_topic}, '
-            f'joints={self.joint_state_topic}, image={self.image_topic}, '
+            f'joints={self.joint_state_topic}, '
+            f'image={self.image_compressed_topic if self.use_compressed_image else self.image_topic}, '
             f'ik={self.ik_group_name}/{self.ik_link_name} in {self.ik_frame_id}'
         )
 
@@ -350,21 +369,27 @@ class NeroVlaBridge(Node):
             self._joint_stamp = self._stamp_to_sec(msg.header.stamp)
 
     def _image_cb(self, msg: Image) -> None:
-        if msg.encoding not in ('rgb8', 'bgr8'):
+        if msg.encoding not in ('rgb8', 'bgr8', 'yuv422_yuy2', 'yuyv', 'yuv422'):
             self.get_logger().warn(
-                f'Unsupported image encoding {msg.encoding}; expected rgb8 or bgr8',
+                f'Unsupported image encoding {msg.encoding}; expected RGB8 or YUYV',
                 throttle_duration_sec=5.0,
             )
             return
-        row_bytes = int(msg.width) * 3
+        channels = 2 if msg.encoding in ('yuv422_yuy2', 'yuyv', 'yuv422') else 3
+        row_bytes = int(msg.width) * channels
         if int(msg.step) < row_bytes or len(msg.data) < int(msg.height) * int(msg.step):
             self.get_logger().warn('Malformed camera image', throttle_duration_sec=5.0)
             return
         try:
             buffer = np.frombuffer(msg.data, dtype=np.uint8)
             rows = buffer.reshape(int(msg.height), int(msg.step))[:, :row_bytes]
-            image = rows.reshape(int(msg.height), int(msg.width), 3)
-            rgb = image if msg.encoding == 'rgb8' else cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image = rows.reshape(int(msg.height), int(msg.width), channels)
+            if channels == 2:
+                rgb = cv2.cvtColor(image, cv2.COLOR_YUV2RGB_YUYV)
+            elif msg.encoding == 'bgr8':
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                rgb = image
             ok, encoded = cv2.imencode(
                 '.jpg', rgb, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
             if not ok:
@@ -375,6 +400,29 @@ class NeroVlaBridge(Node):
         with self._lock:
             self._image_jpeg = encoded.tobytes()
             self._image_shape = (int(msg.height), int(msg.width), 3)
+            self._image_mono = time.monotonic()
+            self._image_stamp = self._stamp_to_sec(msg.header.stamp)
+
+    def _compressed_image_cb(self, msg: CompressedImage) -> None:
+        image_format = msg.format.lower()
+        if 'jpeg' not in image_format and 'jpg' not in image_format:
+            self.get_logger().warn(
+                f'Unsupported compressed image format {msg.format!r}; '
+                'expected JPEG',
+                throttle_duration_sec=5.0,
+            )
+            return
+        jpeg = bytes(msg.data)
+        size = jpeg_size(jpeg)
+        if size is None:
+            self.get_logger().warn(
+                'Malformed compressed camera image',
+                throttle_duration_sec=5.0,
+            )
+            return
+        with self._lock:
+            self._image_jpeg = jpeg
+            self._image_shape = (*size, 3)
             self._image_mono = time.monotonic()
             self._image_stamp = self._stamp_to_sec(msg.header.stamp)
 

@@ -4,6 +4,9 @@
 UMI 原始 HDF5/MKV 转换器产生的 20-D rot6d 数据，同时保留 14-D axis-angle
 兼容模式。默认仍是全链路干跑，任何真实运动都需要显式打开多道门控。
 
+> 2026-11-02：三路真实相机 + 双侧 30 Hz 假反馈 + `dry_run` 已完成本地端到端
+> 验收。真机 IK/轨迹运动、真实 SmolVLA checkpoint 和夹爪命令仍未验收。
+
 ## 1. 数据契约
 
 ### 1.1 默认：20-D rot6d
@@ -199,13 +202,18 @@ env -u PYTHONPATH -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH \
   --robot.scene_camera_key=side \
   --robot.left_wrist_camera_key=left_wrist \
   --robot.right_wrist_camera_key=right_wrist \
-  --robot.scene_image_width=480 \
+  --robot.scene_image_width=640 \
   --robot.scene_image_height=480 \
-  --robot.left_wrist_image_width=480 \
+  --robot.left_wrist_image_width=640 \
   --robot.left_wrist_image_height=480 \
-  --robot.right_wrist_image_width=480 \
+  --robot.right_wrist_image_width=640 \
   --robot.right_wrist_image_height=480
 ```
+
+当前 Scene 和左右腕 Color 均以 `640×480@30` 采集，插件默认也暴露原生
+`640×480`，不做有损拉伸。若 checkpoint 使用 `480×480`，SmolVLA 预处理会用
+`resize_with_pad` 保持宽高比缩放并 padding。训练和推理必须使用相同的预处理
+策略；数据集本身应优先保存相机原生 `640×480`。
 
 本地 client 退出时会调用插件的 `disconnect()`，向 bridge 发送 stop；不要用
 `kill -9` 结束本地 client。
@@ -296,10 +304,15 @@ ros2 launch dual_nero_vla_bridge bimanual_vla_bridge.launch.py \
   action_schema:=rot6d20 \
   execution_mode:=dry_run \
   allow_real_motion:=false \
+  use_compressed_color:=true \
   camera_scene_key:=side \
   camera_left_wrist_key:=left_wrist \
   camera_right_wrist_key:=right_wrist
 ```
+
+双臂 bridge 默认消费三路 `*/color/image_raw/compressed`。如果覆盖任一路
+Color 话题，需同时设置对应的 `*_compressed_topic`，或显式设置
+`use_compressed_color:=false` 改用 raw Image。
 
 用插件读取三路图像和 20-D state，再原样回发一次：
 
@@ -318,6 +331,10 @@ PY
 ```
 
 预期：bridge 只打印动作和限幅，不调用 IK、不发送轨迹。
+
+相机采集为 30 FPS；下方 SmolVLA 首轮的 `--fps=5` 是策略/rollout 频率，二者
+不是同一个参数。不要因为相机已稳定 30 FPS 就直接把 rollout 提到 30 Hz。
+当前 VLA 观测只使用三路 RGB，三路 Depth 默认关闭。
 
 ## 5. 第二轮：双臂 IK 干跑
 
@@ -407,11 +424,11 @@ env -u PYTHONPATH -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH \
   --robot.scene_camera_key=side \
   --robot.left_wrist_camera_key=left_wrist \
   --robot.right_wrist_camera_key=right_wrist \
-  --robot.scene_image_width=480 \
+  --robot.scene_image_width=640 \
   --robot.scene_image_height=480 \
-  --robot.left_wrist_image_width=480 \
+  --robot.left_wrist_image_width=640 \
   --robot.left_wrist_image_height=480 \
-  --robot.right_wrist_image_width=480 \
+  --robot.right_wrist_image_width=640 \
   --robot.right_wrist_image_height=480 \
   --inference.type=rtc \
   --inference.rtc.execution_horizon=10 \
@@ -426,8 +443,8 @@ env -u PYTHONPATH -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH \
 时的 state。对 rot6d 或 axis-angle 直接线性插值不是合法的姿态插值，首轮必须
 关闭；退出时由插件 `disconnect()` 请求两侧停止。
 
-若 checkpoint 相机尺寸不是 480×480，插件会缩放到配置尺寸。更推荐直接改成
-训练尺寸，避免额外缩放改变视野。
+插件默认读取原生 `640×480`；checkpoint 尺寸不同时由 SmolVLA 的
+`resize_with_pad` 完成保持宽高比的缩放和 padding。
 
 ## 9. 安全门控
 
@@ -460,6 +477,28 @@ cd /home/work/nero_duo_arm
 
 覆盖：20-D 限幅、双臂 IK 调用、右臂失败整组拒绝、14 关节单 goal、14-D
 axis-angle 模式和 LeRobot 插件 20-D/三相机映射。
+
+### 11.1 本地端到端 dry-run 验收结果（历史配置）
+
+以下结果是在当前 `640×480` 配置之前测得，保留作为历史记录。环境：三路
+RealSense 实际相机流；Scene `640×360 YUYV @ 30`，左右腕
+`480×270 RGB8 + Z16 @ 30`；VLA bridge `execution_mode=dry_run`；双侧 TCP 和
+JointState 由假反馈以 30 Hz 发布。
+
+- 原生 bridge：连续 60 秒、1800 次 `get_observation`，实际 `30.0 Hz`，错误 0；
+- bridge 请求延迟：平均 `0.206 ms`，P95 `0.29 ms`，最大 `0.855 ms`；
+- 三路图像唯一时间戳帧率：Scene `29.88 FPS`、左腕 `29.91 FPS`、右腕 `29.99 FPS`；
+- 三路 JPEG 均可解码，尺寸为 `640×360`、`480×270`、`480×270`；
+- 20-D `send_action` 在 dry-run 下返回 `accepted=true`、`executed=false`，
+  未调用 IK 或轨迹执行；
+- LeRobot `NeroBimanual` 插件连续 30 秒、900 次观测，实际 `30.0 Hz`，状态和
+  动作均为 20 维；插件请求平均 `1.541 ms`、P95 `1.943 ms`、最大 `3.572 ms`；
+- 插件 480×480 checkpoint 尺寸适配路径通过，三路输出均为 `480×480×3`；
+- `./deployment/scripts/test_bimanual_vla_pipeline.sh` 通过：bridge 5 项测试和
+  LeRobot 插件 4 项测试全部 OK。
+
+未覆盖：真实双侧 TCP/关节反馈、真实 `/compute_ik`、FollowJointTrajectory
+真机执行、真实 SmolVLA checkpoint、夹爪开合。
 
 ## 12. 验收标准
 

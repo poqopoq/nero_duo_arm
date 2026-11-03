@@ -72,8 +72,14 @@ ros2 launch dual_nero_vla_bridge vla_bridge.launch.py \
   allow_real_motion:=false \
   side:=left \
   image_topic:=/camera_scene/color/image_raw \
+  image_compressed_topic:=/camera_scene/color/image_raw/compressed \
+  use_compressed_image:=true \
   image_key:=camera1
 ```
+
+相机实际以 30 FPS 采集；`vla_bridge` 默认优先消费
+`/camera_scene/color/image_raw/compressed`。如果自定义 raw 图像话题，必须同时
+设置 `image_compressed_topic`，或显式设置 `use_compressed_image:=false`。
 
 默认 socket 是 `/tmp/nero_vla_bridge.sock`。检查：
 
@@ -123,6 +129,13 @@ with Nero(NeroConfig(
 PY
 ```
 
+当前 Scene Color 的原始尺寸是 `640×480`，所以示例直接使用 `640×480`，避免
+额外缩放。若 SmolVLA checkpoint 的训练尺寸不同，应以 checkpoint 为准；插件
+会用 `INTER_AREA` 把图像缩放到 `image_width`/`image_height`。`NeroConfig` 的
+`image_fps` 只是插件配置字段，当前不驱动 RealSense 采集循环；相机 30 FPS 由
+`all_cameras.launch.py` 决定。SmolVLA 会在模型预处理中把图像保持宽高比缩放
+并 padding 到 checkpoint 输入尺寸。
+
 `execution_mode:=dry_run` 时 `send_action` 只做安全过滤并打印，不调用 IK、
 不驱动机械臂。bridge 默认限制：
 
@@ -147,6 +160,10 @@ python -m lerobot.async_inference.policy_server \
 第一次握手时，客户端会把 policy 类型、checkpoint 路径和机器人特征发给
 server。server 需要能访问该 checkpoint。
 
+这里的 `--fps=15` 是策略服务器/控制循环频率，不是相机采集频率。当前相机
+采集仍为 30 FPS；首轮推理建议保持 5–15 Hz，不要因为相机是 30 FPS 就直接
+把策略频率设为 30 Hz。
+
 ## 6. 本地启动 robot client
 
 ```bash
@@ -164,7 +181,7 @@ env -u PYTHONPATH \
   --robot.side=left \
   --robot.camera_key=camera1 \
   --robot.image_width=640 \
-  --robot.image_height=480 \
+  --robot.image_height=360 \
   --robot.request_timeout_s=2.0 \
   --server_address=<SERVER_IP>:8080 \
   --policy_type=smolvla \

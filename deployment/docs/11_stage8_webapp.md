@@ -1,7 +1,7 @@
 # 阶段 8：双臂 Web 控制台
 
 > 记录日期：2026-11-02  
-> 状态：**Send/Park 已接入 MoveIt `/move_action`；dry-run 联锁、Park、取消与 Stop both 已通过，待真机验收**
+> 状态：**Send/Park 已接入 MoveIt `/move_action`；dry-run 联锁、Park、取消与 Stop both 已通过。Web 端三路相机与 WebSocket 已完成端到端验收；真机运动仍待验收**
 
 完整按钮说明、HTTP/ROS 控制命令和故障排查见
 [完整使用手册与命令速查](12_usage_and_commands.md)。
@@ -24,7 +24,7 @@ ros2_ws/src/dual_nero_webapp/
 - 支持左右臂独立运动和 **Both Send / Both Park** 同步双臂运动；
 - 左右臂及双臂 **Park** 均从安装后的 `config/support_pose.yaml` 读取支撑姿态；
 - 双侧控制门、使能/失能和软件急停；
-- 场景、左腕、右腕三路 RealSense 画面，可切换 Color/Depth；
+- 场景、左腕、右腕三路 RealSense 画面，可切换 Color/Depth；Depth 默认关闭；
 - 相机画廊按屏幕宽度自动换行，完整显示画面，页面可纵向滚动。
 
 Web app 不再直接发布关节目标。每次运动先做控制门、电机使能、反馈新鲜度和
@@ -151,15 +151,22 @@ Web app 并不会自动允许运动。Web app 自身的控制门也默认关闭�
 ## 5. 相机话题
 
 Web app 不直接打开 RealSense 设备，而是订阅 `dual_nero_cameras` 已经发布的
-ROS 话题：
+ROS 话题。Color 默认使用 JPEG 压缩流；Depth 只有在相机 launch 中显式开启后
+才会发布 raw Image：
 
 ```text
-/camera_scene/color/image_raw
+/camera_scene/color/image_raw/compressed
 /camera_scene/aligned_depth_to_color/image_raw
-/camera_left_wrist/color/image_raw
+/camera_left_wrist/color/image_raw/compressed
 /camera_left_wrist/aligned_depth_to_color/image_raw
-/camera_right_wrist/color/image_raw
+/camera_right_wrist/color/image_raw/compressed
 /camera_right_wrist/aligned_depth_to_color/image_raw
+```
+
+回退到 raw Color：
+
+```bash
+ros2 launch dual_nero_webapp webapp.launch.py use_compressed_color:=false
 ```
 
 如果想确认相机是否真正出帧：
@@ -168,6 +175,9 @@ ROS 话题：
 ros2 topic hz /camera_scene/color/image_raw
 ros2 topic hz /camera_left_wrist/color/image_raw
 ros2 topic hz /camera_right_wrist/color/image_raw
+ros2 topic hz /camera_scene/color/image_raw/compressed
+ros2 topic hz /camera_left_wrist/color/image_raw/compressed
+ros2 topic hz /camera_right_wrist/color/image_raw/compressed
 ```
 
 ## 6. 已验证
@@ -193,13 +203,23 @@ ros2 topic hz /camera_right_wrist/color/image_raw
 - 轨迹桥日志确认 `Trajectory cancelled by cancel service`，MoveIt 报告
   `PATH_TOLERANCE_VIOLATED`，随后控制器停止；下一次运动前日志确认
   `Trajectory cancellation latch cleared`。
+- 2026-11-02 真实相机 Web 端到端验收：`/`、`/api/health`、`/api/config`、
+  `/api/state`、`/api/cameras`、`/robot_urdf` 和静态资源均返回 HTTP 200；
+- 三路 Color MJPEG 可解码，Scene 和左右腕均为 `640×480`，相机状态约
+  `30 FPS`；
+- WebSocket `/ws` 能收到双侧初始状态；控制门关闭时发送运动命令返回
+  `left control gate is closed`，不会下发电机目标；
+- 三路 Depth 默认关闭，因此 `/stream/*/depth` 返回空流属于预期；如需 Depth，
+  分别开启 `enable_scene_depth` / `enable_wrist_depth` 并单独复测。
 
 ## 7. 待真机验收
 
 - [ ] 两侧控制门与急停按钮的真机联锁；
 - [ ] 左右 Park 姿态、运动方向、速度与到位反馈的真机验收；
 - [ ] 滑条命令方向与关节限位现场确认；
-- [ ] 三路相机 Color/Depth 完整画面、帧率和延迟；
+- [x] 三路 Color 完整画面、帧率和延迟（2026-11-02 通过）；
+- [x] 双腕 Depth 开启时画面、帧率和延迟（2026-11-02 通过，当前默认关闭）；
+- [ ] Scene Depth 开启后的画面、帧率和延迟；
 - [ ] 小屏和低分辨率下相机画廊与页面滚动；
 - [ ] 长时间运行下 FastAPI/MJPEG 与 ROS 回调的稳定性。
 

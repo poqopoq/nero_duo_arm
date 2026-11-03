@@ -13,15 +13,25 @@ def generate_launch_description():
         DeclareLaunchArgument('allow_real_motion', default_value='false'),
         DeclareLaunchArgument(
             'camera_scene_topic', default_value='/camera_scene/color/image_raw'),
+        DeclareLaunchArgument(
+            'camera_scene_compressed_topic',
+            default_value='/camera_scene/color/image_raw/compressed'),
         DeclareLaunchArgument('camera_scene_key', default_value='side'),
         DeclareLaunchArgument(
             'camera_left_wrist_topic',
             default_value='/camera_left_wrist/color/image_raw'),
+        DeclareLaunchArgument(
+            'camera_left_wrist_compressed_topic',
+            default_value='/camera_left_wrist/color/image_raw/compressed'),
         DeclareLaunchArgument('camera_left_wrist_key', default_value='left_wrist'),
         DeclareLaunchArgument(
             'camera_right_wrist_topic',
             default_value='/camera_right_wrist/color/image_raw'),
+        DeclareLaunchArgument(
+            'camera_right_wrist_compressed_topic',
+            default_value='/camera_right_wrist/color/image_raw/compressed'),
         DeclareLaunchArgument('camera_right_wrist_key', default_value='right_wrist'),
+        DeclareLaunchArgument('use_compressed_color', default_value='true'),
         DeclareLaunchArgument('max_translation_step_m', default_value='0.01'),
         DeclareLaunchArgument('max_rotation_step_rad', default_value='0.05'),
         DeclareLaunchArgument('max_joint_step_rad', default_value='0.15'),
@@ -49,15 +59,23 @@ def generate_launch_description():
                 'execution_mode': LaunchConfiguration('execution_mode'),
                 'allow_real_motion': LaunchConfiguration('allow_real_motion'),
                 'camera_scene_topic': LaunchConfiguration('camera_scene_topic'),
+                'camera_scene_compressed_topic': LaunchConfiguration(
+                    'camera_scene_compressed_topic'),
                 'camera_scene_key': LaunchConfiguration('camera_scene_key'),
                 'camera_left_wrist_topic': LaunchConfiguration(
                     'camera_left_wrist_topic'),
+                'camera_left_wrist_compressed_topic': LaunchConfiguration(
+                    'camera_left_wrist_compressed_topic'),
                 'camera_left_wrist_key': LaunchConfiguration(
                     'camera_left_wrist_key'),
                 'camera_right_wrist_topic': LaunchConfiguration(
                     'camera_right_wrist_topic'),
+                'camera_right_wrist_compressed_topic': LaunchConfiguration(
+                    'camera_right_wrist_compressed_topic'),
                 'camera_right_wrist_key': LaunchConfiguration(
                     'camera_right_wrist_key'),
+                'use_compressed_color': LaunchConfiguration(
+                    'use_compressed_color'),
                 'max_translation_step_m': LaunchConfiguration(
                     'max_translation_step_m'),
                 'max_rotation_step_rad': LaunchConfiguration(

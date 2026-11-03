@@ -11,6 +11,7 @@
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>dual_nero_camera_relay</exec_depend>
   <exec_depend>realsense2_camera</exec_depend>
 
   <export>

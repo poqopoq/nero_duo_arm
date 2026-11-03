@@ -30,11 +30,11 @@ class NeroBimanualConfig(RobotConfig):
     scene_camera_key: str = 'side'
     left_wrist_camera_key: str = 'left_wrist'
     right_wrist_camera_key: str = 'right_wrist'
-    scene_image_width: int = 480
+    scene_image_width: int = 640
     scene_image_height: int = 480
-    left_wrist_image_width: int = 480
+    left_wrist_image_width: int = 640
     left_wrist_image_height: int = 480
-    right_wrist_image_width: int = 480
+    right_wrist_image_width: int = 640
     right_wrist_image_height: int = 480
 
     request_timeout_s: float = 2.0

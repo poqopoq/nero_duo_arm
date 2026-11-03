@@ -1,7 +1,12 @@
 # 阶段 4：三台 RealSense 接入
 
 > 记录日期：2026-11-02  
-> 状态：**暂停，等待 USB 3.2 Gen2 外接供电 Hub**。三台相机已识别，WSL USB/IP 下三机高带宽并行仍不稳定。
+> 状态：**当前开发配置已统一为 `640×480@30`（2026-11-02）**：三路 Color
+> 20 秒短测通过；三路 Depth 默认关闭。10 分钟长稳、Depth 开启和相机最终
+> 安装位复测仍未完成。
+
+> 第 6–18 节保留早期 WSL/USB 调试记录。其中的 15 FPS、5 FPS 和混合分辨率是
+> 历史阶段结果，不是当前 `all_cameras.launch.py` 默认配置。
 
 ## 1. 已安装
 
@@ -399,3 +404,73 @@ Incomplete frame / 帧超时: 0
 
 结论：USB2 临时配置已通过三机功能验证。由于 D435 仍以 480 Mbps 枚举，
 继续保留 USB3 数据线和 10 分钟正式验收待办。
+
+## 19. 当前最终开发配置：30 FPS（2026-11-02）
+
+当前 `all_cameras.launch.py` 的默认配置（LeRobot 采集使用 4:3 原生画面，
+模型端再缩放到 checkpoint 输入尺寸）：
+
+| 相机 | Color | Depth |
+| --- | --- | --- |
+| Scene / D435 | `640×480 YUYV @ 30` | 默认关闭 |
+| Left wrist / D405 | `640×480 RGB8 @ 30` | 默认关闭 |
+| Right wrist / D405 | `640×480 RGB8 @ 30` | 默认关闭 |
+
+三台相机均设置 `enable_sync=false`，关闭 Infra 和 PointCloud。Color 同时由
+`color_jpeg_relay` 发布 JPEG quality 78 的压缩流：
+
+```text
+/camera_scene/color/image_raw/compressed
+/camera_left_wrist/color/image_raw/compressed
+/camera_right_wrist/color/image_raw/compressed
+```
+
+启动：
+
+```bash
+cd /home/work/nero_duo_arm/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch dual_nero_cameras all_cameras.launch.py
+```
+
+检查三路 Color 和压缩流：
+
+```bash
+ros2 topic hz /camera_scene/color/image_raw
+ros2 topic hz /camera_left_wrist/color/image_raw
+ros2 topic hz /camera_right_wrist/color/image_raw
+ros2 topic hz /camera_scene/color/image_raw/compressed
+ros2 topic hz /camera_left_wrist/color/image_raw/compressed
+ros2 topic hz /camera_right_wrist/color/image_raw/compressed
+```
+
+20 秒短测：
+
+```text
+Scene Color:       约 29.9 FPS
+Left wrist Color:  约 30.0 FPS
+Right wrist Color: 约 30.0 FPS
+最大帧间隔:         约 44 ms
+```
+
+Web app 运行时，可用下面的只读接口核对实际分辨率和 FPS：
+
+```bash
+curl -s http://127.0.0.1:8080/api/cameras | python3 -m json.tool
+```
+
+LeRobot/VLA 只消费三路 RGB，因此三路 Depth 默认关闭。Scene Depth 在 30 FPS
+下同时开 Color/Depth 还会掉 Color 帧。需要时单独开启：
+
+```bash
+ros2 launch dual_nero_cameras all_cameras.launch.py \
+  enable_scene_depth:=true
+
+ros2 launch dual_nero_cameras all_cameras.launch.py \
+  enable_wrist_depth:=true
+```
+
+开启任意一路 Depth 后都属于新的带宽配置，必须重新检查 FPS、最大帧间隔和
+时间戳，不能沿用上面的 Color 结果。正式验收仍需连续运行至少 10 分钟，并在
+相机安装到最终位后重新做外参和腕部手眼标定。

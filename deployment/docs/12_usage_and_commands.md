@@ -143,6 +143,10 @@ ros2 launch dual_nero_control dual_nero_drivers.launch.py \
 ros2 launch dual_nero_cameras all_cameras.launch.py
 ```
 
+当前默认配置为三路 Color `640×480 @ 30`；三路 Depth 默认全部关闭，因为
+LeRobot/VLA 只消费 RGB。三路 Color 同时发布原始 Image 和 JPEG CompressedImage。
+相机采集是 30 FPS；VLA 文档中的 `--fps=5`/`15` 是策略或 rollout 频率。
+
 MoveIt 规划和执行桥：
 
 ```bash
@@ -178,6 +182,7 @@ ros2 launch dual_nero_webapp webapp.launch.py
 | `moveit_dry_run` | `true` | `true` 不向驱动发送轨迹；`false` 才控制真机 |
 | `moveit_rviz` | `false` | MoveIt 启动时是否打开 RViz |
 | `auto_enable` | `true` | 驱动启动时是否自动使能电机；首次调试建议显式设为 `false` |
+| `use_compressed_color` | `true` | Web app 的 Color 默认订阅 JPEG 压缩流；设为 `false` 时改用 raw Image |
 | `speed_percent` | `5` | NERO 驱动速度百分比 |
 | `http_host` | `0.0.0.0` | Web app 监听地址 |
 | `http_port` | `8080` | Web app 端口 |
@@ -258,10 +263,13 @@ ros2 launch dual_nero_webapp webapp.launch.py
 
 ### 3.5 相机
 
-- `Scene`、`Left wrist`、`Right wrist` 对应三路 ROS Image 话题。
+- `Scene`、`Left wrist`、`Right wrist` 对应三路相机；Color 默认使用
+  JPEG CompressedImage。Depth 默认不发布，启用后使用 raw Image。
 - `color/depth` 按钮切换彩色和深度 MJPEG。
 - 状态显示 `live/offline/stale`，底部显示采集 FPS、分辨率和帧龄。
 - 画面断开时页面会自动重试；持续 `stale` 时检查 ROS 话题和 USB。
+- 三路 Depth 当前默认关闭，因此 Depth 页面显示空流是预期行为；需要时分别用
+  `enable_scene_depth:=true` 或 `enable_wrist_depth:=true` 开启并复测稳定性。
 - 相机画面只用于观察，当前没有接入 MoveIt 动态避障。
 
 ## 4. 推荐操作顺序
@@ -547,11 +555,33 @@ Web app 服务端会按以下保守范围截断 J1-J7（rad）：
 
 ### 7.1 启动和检查
 
+当前默认 30 FPS 配置：
+
+| 相机 | Color | Depth |
+| --- | --- | --- |
+| Scene / D435 | `640×480 YUYV @ 30` | 默认关闭 |
+| Left wrist / D405 | `640×480 RGB8 @ 30` | 默认关闭 |
+| Right wrist / D405 | `640×480 RGB8 @ 30` | 默认关闭 |
+
+三台均设置 `enable_sync=false`、关闭 Infra 和 PointCloud；Color 由
+`color_jpeg_relay` 以 quality 78 发布压缩流。
+
 ```bash
 ros2 launch dual_nero_cameras all_cameras.launch.py
 ```
 
-两只腕部相机单独启动：
+开启 Scene Depth 或双腕 Depth（会改变带宽配置，不能沿用当前 Color 30 FPS
+验收结果）：
+
+```bash
+ros2 launch dual_nero_cameras all_cameras.launch.py \
+  enable_scene_depth:=true
+
+ros2 launch dual_nero_cameras all_cameras.launch.py \
+  enable_wrist_depth:=true
+```
+
+两只腕部相机单独启动（默认 RGB-only）：
 
 ```bash
 ros2 launch dual_nero_cameras d405_pair.launch.py
@@ -572,26 +602,60 @@ ros2 topic hz /camera_left_wrist/color/image_raw
 ros2 topic hz /camera_right_wrist/color/image_raw
 ```
 
-Web app 默认话题：
+确认三路 JPEG 压缩流：
+
+```bash
+ros2 topic hz /camera_scene/color/image_raw/compressed
+ros2 topic hz /camera_left_wrist/color/image_raw/compressed
+ros2 topic hz /camera_right_wrist/color/image_raw/compressed
+```
+
+如果临时开启双腕 Depth，再检查对应话题：
+
+```bash
+ros2 topic hz /camera_left_wrist/depth/image_rect_raw
+ros2 topic hz /camera_right_wrist/depth/image_rect_raw
+```
+
+Web app 默认 Color 话题：
 
 ```text
-/camera_scene/color/image_raw
+/camera_scene/color/image_raw/compressed
+/camera_left_wrist/color/image_raw/compressed
+/camera_right_wrist/color/image_raw/compressed
+```
+
+启用 Depth 后额外订阅：
+
+```text
 /camera_scene/aligned_depth_to_color/image_raw
-/camera_left_wrist/color/image_raw
 /camera_left_wrist/aligned_depth_to_color/image_raw
-/camera_right_wrist/color/image_raw
 /camera_right_wrist/aligned_depth_to_color/image_raw
 ```
 
-覆盖话题或关闭相机转发：
+通过 Web app 查看实际 FPS 和分辨率：
+
+```bash
+curl -s http://127.0.0.1:8080/api/cameras | python3 -m json.tool
+```
+
+回退到 raw Color，或覆盖自定义 Color 话题：
 
 ```bash
 ros2 launch dual_nero_webapp webapp.launch.py \
   scene_color_topic:=/my_camera/color/image_raw \
+  scene_color_compressed_topic:=/my_camera/color/image_raw/compressed \
   enable_cameras:=true
+
+ros2 launch dual_nero_webapp webapp.launch.py \
+  use_compressed_color:=false
 
 ros2 launch dual_nero_webapp webapp.launch.py enable_cameras:=false
 ```
+
+如果只覆盖 `scene_color_topic` 而保持 `use_compressed_color:=true`，Web app
+仍会订阅默认压缩话题。自定义 raw 话题时，要么同时设置对应的
+`*_color_compressed_topic`，要么显式设置 `use_compressed_color:=false`。
 
 ### 7.2 相机标定
 

@@ -116,8 +116,13 @@ ros2 launch dual_nero_vla_bridge vla_bridge.launch.py \
   side:=left \
   ik_frame_id:=left_base_link \
   image_topic:=/camera_scene/color/image_raw \
+  image_compressed_topic:=/camera_scene/color/image_raw/compressed \
+  use_compressed_image:=true \
   image_key:=camera1
 ```
+
+单臂 bridge 默认消费 JPEG 压缩流。自定义 raw 图像话题时，必须同时覆盖
+`image_compressed_topic`，或设置 `use_compressed_image:=false`。
 
 用插件发送一个 `+5 mm` 的测试动作：
 
@@ -127,13 +132,21 @@ env -u PYTHONPATH -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH \
     /home/work/miniforge3/envs/lerobot/bin/python - <<'PY'
 from lerobot_robot_nero import Nero, NeroConfig
 
-with Nero(NeroConfig(bridge_socket='/tmp/nero_vla_bridge.sock')) as robot:
+with Nero(NeroConfig(
+    bridge_socket='/tmp/nero_vla_bridge.sock',
+    image_width=640,
+    image_height=480,
+)) as robot:
     obs = robot.get_observation()
     action = {name: obs[name] for name in robot.action_features}
     action['ee.x'] += 0.005
     print('applied:', robot.send_action(action))
 PY
 ```
+
+当前 Scene Color 原始尺寸为 `640×480`。如果 SmolVLA checkpoint 使用其它输入
+尺寸，由模型预处理保持宽高比缩放并 padding 到 checkpoint 尺寸；训练和推理
+必须使用同一预处理策略。
 
 bridge 终端应出现 `IK target ...`，且没有 `Sending trajectory`。如果出现
 坐标系、关节限位或单步超限错误，先修坐标/模型，不要进入下一轮。

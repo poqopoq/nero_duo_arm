@@ -36,10 +36,11 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Image, JointState
+from sensor_msgs.msg import CompressedImage, Image, JointState
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from .image_utils import jpeg_size
 from .protocol import ProtocolError, recv_frame, send_frame
 from .vla_bridge import (
     MotionError,
@@ -138,11 +139,21 @@ class NeroBimanualVlaBridge(Node):
         self.declare_parameter('right_joint_state_topic', '/right/feedback/joint_states')
 
         self.declare_parameter('camera_scene_topic', '/camera_scene/color/image_raw')
+        self.declare_parameter(
+            'camera_scene_compressed_topic',
+            '/camera_scene/color/image_raw/compressed')
         self.declare_parameter('camera_scene_key', 'side')
         self.declare_parameter('camera_left_wrist_topic', '/camera_left_wrist/color/image_raw')
+        self.declare_parameter(
+            'camera_left_wrist_compressed_topic',
+            '/camera_left_wrist/color/image_raw/compressed')
         self.declare_parameter('camera_left_wrist_key', 'left_wrist')
         self.declare_parameter('camera_right_wrist_topic', '/camera_right_wrist/color/image_raw')
+        self.declare_parameter(
+            'camera_right_wrist_compressed_topic',
+            '/camera_right_wrist/color/image_raw/compressed')
         self.declare_parameter('camera_right_wrist_key', 'right_wrist')
+        self.declare_parameter('use_compressed_color', True)
         self.declare_parameter('jpeg_quality', 90)
         self.declare_parameter('observation_timeout_sec', 0.75)
         self.declare_parameter('image_timeout_sec', 1.5)
@@ -260,21 +271,37 @@ class NeroBimanualVlaBridge(Node):
         if self.trajectory_duration <= 0.0:
             raise ValueError('trajectory_duration_sec must be positive')
 
+        self.use_compressed_color = bool(
+            self.get_parameter('use_compressed_color').value)
         self.camera_specs = [
             {
                 'topic': str(self.get_parameter('camera_scene_topic').value),
+                'compressed_topic': str(
+                    self.get_parameter('camera_scene_compressed_topic').value),
                 'key': str(self.get_parameter('camera_scene_key').value),
             },
             {
                 'topic': str(self.get_parameter('camera_left_wrist_topic').value),
+                'compressed_topic': str(
+                    self.get_parameter(
+                        'camera_left_wrist_compressed_topic').value),
                 'key': str(self.get_parameter('camera_left_wrist_key').value),
             },
             {
                 'topic': str(self.get_parameter('camera_right_wrist_topic').value),
+                'compressed_topic': str(
+                    self.get_parameter(
+                        'camera_right_wrist_compressed_topic').value),
                 'key': str(self.get_parameter('camera_right_wrist_key').value),
             },
         ]
-        self.camera_specs = [spec for spec in self.camera_specs if spec['topic']]
+        for spec in self.camera_specs:
+            spec['topic'] = (
+                spec['compressed_topic']
+                if self.use_compressed_color
+                else spec['topic'])
+        self.camera_specs = [
+            spec for spec in self.camera_specs if spec['topic']]
         keys = [spec['key'] for spec in self.camera_specs]
         if len(set(keys)) != len(keys):
             raise ValueError('camera image keys must be unique')
@@ -339,12 +366,21 @@ class NeroBimanualVlaBridge(Node):
                 topic_qos,
             )
         for spec in self.camera_specs:
-            self.create_subscription(
-                Image,
-                spec['topic'],
-                lambda msg, key=spec['key']: self._image_cb(key, msg),
-                image_qos,
-            )
+            if self.use_compressed_color:
+                self.create_subscription(
+                    CompressedImage,
+                    spec['topic'],
+                    lambda msg, key=spec['key']: self._compressed_image_cb(
+                        key, msg),
+                    image_qos,
+                )
+            else:
+                self.create_subscription(
+                    Image,
+                    spec['topic'],
+                    lambda msg, key=spec['key']: self._image_cb(key, msg),
+                    image_qos,
+                )
 
         self._stop_clients = {
             side: self.create_client(Empty, f'/{side}/emergency_stop')
@@ -428,14 +464,15 @@ class NeroBimanualVlaBridge(Node):
             feedback['joint_stamp'] = self._stamp_to_sec(msg.header.stamp)
 
     def _image_cb(self, key: str, msg: Image) -> None:
-        if msg.encoding not in ('rgb8', 'bgr8'):
+        if msg.encoding not in ('rgb8', 'bgr8', 'yuv422_yuy2', 'yuyv', 'yuv422'):
             self.get_logger().warn(
                 f'Unsupported image encoding {msg.encoding} for {key}; '
-                'expected rgb8 or bgr8',
+                'expected RGB8 or YUYV',
                 throttle_duration_sec=5.0,
             )
             return
-        row_bytes = int(msg.width) * 3
+        channels = 2 if msg.encoding in ('yuv422_yuy2', 'yuyv', 'yuv422') else 3
+        row_bytes = int(msg.width) * channels
         if int(msg.step) < row_bytes or len(msg.data) < int(msg.height) * int(msg.step):
             self.get_logger().warn(
                 f'Malformed camera image for {key}', throttle_duration_sec=5.0)
@@ -443,9 +480,13 @@ class NeroBimanualVlaBridge(Node):
         try:
             buffer = np.frombuffer(msg.data, dtype=np.uint8)
             rows = buffer.reshape(int(msg.height), int(msg.step))[:, :row_bytes]
-            image = rows.reshape(int(msg.height), int(msg.width), 3)
-            rgb = image if msg.encoding == 'rgb8' else cv2.cvtColor(
-                image, cv2.COLOR_BGR2RGB)
+            image = rows.reshape(int(msg.height), int(msg.width), channels)
+            if channels == 2:
+                rgb = cv2.cvtColor(image, cv2.COLOR_YUV2RGB_YUYV)
+            elif msg.encoding == 'bgr8':
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                rgb = image
             ok, encoded = cv2.imencode(
                 '.jpg', rgb, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
             if not ok:
@@ -458,6 +499,33 @@ class NeroBimanualVlaBridge(Node):
             self._images[key] = {
                 'jpeg': encoded.tobytes(),
                 'shape': (int(msg.height), int(msg.width), 3),
+                'mono': time.monotonic(),
+                'stamp': self._stamp_to_sec(msg.header.stamp),
+            }
+
+    def _compressed_image_cb(
+        self, key: str, msg: CompressedImage
+    ) -> None:
+        image_format = msg.format.lower()
+        if 'jpeg' not in image_format and 'jpg' not in image_format:
+            self.get_logger().warn(
+                f'Unsupported compressed image format {msg.format!r} '
+                f'for {key}; expected JPEG',
+                throttle_duration_sec=5.0,
+            )
+            return
+        jpeg = bytes(msg.data)
+        size = jpeg_size(jpeg)
+        if size is None:
+            self.get_logger().warn(
+                f'Malformed compressed camera image for {key}',
+                throttle_duration_sec=5.0,
+            )
+            return
+        with self._lock:
+            self._images[key] = {
+                'jpeg': jpeg,
+                'shape': (*size, 3),
                 'mono': time.monotonic(),
                 'stamp': self._stamp_to_sec(msg.header.stamp),
             }

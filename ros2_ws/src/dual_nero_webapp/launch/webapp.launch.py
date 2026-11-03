@@ -41,11 +41,18 @@ def generate_launch_description():
             'enable_cameras': enable_cameras,
             'depth_min_m': LaunchConfiguration('depth_min_m'),
             'depth_max_m': LaunchConfiguration('depth_max_m'),
+            'use_compressed_color': LaunchConfiguration('use_compressed_color'),
             'scene_color_topic': LaunchConfiguration('scene_color_topic'),
+            'scene_color_compressed_topic': LaunchConfiguration(
+                'scene_color_compressed_topic'),
             'scene_depth_topic': LaunchConfiguration('scene_depth_topic'),
             'left_wrist_color_topic': LaunchConfiguration('left_wrist_color_topic'),
+            'left_wrist_color_compressed_topic': LaunchConfiguration(
+                'left_wrist_color_compressed_topic'),
             'left_wrist_depth_topic': LaunchConfiguration('left_wrist_depth_topic'),
             'right_wrist_color_topic': LaunchConfiguration('right_wrist_color_topic'),
+            'right_wrist_color_compressed_topic': LaunchConfiguration(
+                'right_wrist_color_compressed_topic'),
             'right_wrist_depth_topic': LaunchConfiguration('right_wrist_depth_topic'),
             'support_pose_file': support_pose_path,
             'urdf_xacro': xacro_path,
@@ -142,6 +149,12 @@ def generate_launch_description():
         DeclareLaunchArgument('depth_min_m', default_value='0.05'),
         DeclareLaunchArgument('depth_max_m', default_value='2.0'),
         DeclareLaunchArgument(
+            'use_compressed_color', default_value='true',
+            description='Subscribe to relayed JPEG color topics for stable 30 FPS.'),
+        DeclareLaunchArgument(
+            'scene_color_compressed_topic',
+            default_value='/camera_scene/color/image_raw/compressed'),
+        DeclareLaunchArgument(
             'scene_color_topic', default_value='/camera_scene/color/image_raw'),
         DeclareLaunchArgument(
             'scene_depth_topic',
@@ -150,11 +163,17 @@ def generate_launch_description():
             'left_wrist_color_topic',
             default_value='/camera_left_wrist/color/image_raw'),
         DeclareLaunchArgument(
+            'left_wrist_color_compressed_topic',
+            default_value='/camera_left_wrist/color/image_raw/compressed'),
+        DeclareLaunchArgument(
             'left_wrist_depth_topic',
             default_value='/camera_left_wrist/aligned_depth_to_color/image_raw'),
         DeclareLaunchArgument(
             'right_wrist_color_topic',
             default_value='/camera_right_wrist/color/image_raw'),
+        DeclareLaunchArgument(
+            'right_wrist_color_compressed_topic',
+            default_value='/camera_right_wrist/color/image_raw/compressed'),
         DeclareLaunchArgument(
             'right_wrist_depth_topic',
             default_value='/camera_right_wrist/aligned_depth_to_color/image_raw'),

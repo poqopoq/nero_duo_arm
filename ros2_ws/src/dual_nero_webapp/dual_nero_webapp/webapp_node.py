@@ -27,7 +27,7 @@ import math
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticArray
@@ -44,17 +44,18 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Image, JointState
+from sensor_msgs.msg import CompressedImage, Image, JointState
 from std_srvs.srv import Empty, SetBool, Trigger
 import uvicorn
 import xacro
 import yaml
 
-from .image_stream import ImageStream
+from .image_stream import CompressedImageStream, ImageStream
 
 
 SIDES = ('left', 'right')
 MOVE_TARGETS = ('left', 'right', 'both')
+CameraStream = Union[ImageStream, CompressedImageStream]
 LOCAL_JOINT_NAMES = [f'joint{index}' for index in range(1, 8)]
 
 # Conservative intersection of the NERO driver limits and the dual-arm URDF.
@@ -71,9 +72,12 @@ JOINT_LIMITS = [
 ]
 
 CAMERA_DEFS = (
-    ('scene', 'Scene', 'scene_color_topic', 'scene_depth_topic'),
-    ('left_wrist', 'Left wrist', 'left_wrist_color_topic', 'left_wrist_depth_topic'),
-    ('right_wrist', 'Right wrist', 'right_wrist_color_topic', 'right_wrist_depth_topic'),
+    ('scene', 'Scene', 'scene_color_topic',
+     'scene_color_compressed_topic', 'scene_depth_topic'),
+    ('left_wrist', 'Left wrist', 'left_wrist_color_topic',
+     'left_wrist_color_compressed_topic', 'left_wrist_depth_topic'),
+    ('right_wrist', 'Right wrist', 'right_wrist_color_topic',
+     'right_wrist_color_compressed_topic', 'right_wrist_depth_topic'),
 )
 
 
@@ -174,15 +178,25 @@ class WebappNode(Node):
         self.declare_parameter('enable_cameras', True)
         self.declare_parameter('depth_min_m', 0.05)
         self.declare_parameter('depth_max_m', 2.0)
+        self.declare_parameter('use_compressed_color', True)
 
+        self.declare_parameter(
+            'scene_color_compressed_topic',
+            '/camera_scene/color/image_raw/compressed')
         self.declare_parameter('scene_color_topic', '/camera_scene/color/image_raw')
         self.declare_parameter(
             'scene_depth_topic', '/camera_scene/aligned_depth_to_color/image_raw')
+        self.declare_parameter(
+            'left_wrist_color_compressed_topic',
+            '/camera_left_wrist/color/image_raw/compressed')
         self.declare_parameter(
             'left_wrist_color_topic', '/camera_left_wrist/color/image_raw')
         self.declare_parameter(
             'left_wrist_depth_topic',
             '/camera_left_wrist/aligned_depth_to_color/image_raw')
+        self.declare_parameter(
+            'right_wrist_color_compressed_topic',
+            '/camera_right_wrist/color/image_raw/compressed')
         self.declare_parameter(
             'right_wrist_color_topic', '/camera_right_wrist/color/image_raw')
         self.declare_parameter(
@@ -397,27 +411,42 @@ class WebappNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        for name, label, color_param, depth_param in CAMERA_DEFS:
-            streams: Dict[str, ImageStream] = {}
+        use_compressed = bool(self.get_parameter('use_compressed_color').value)
+        for name, label, color_param, compressed_param, depth_param in CAMERA_DEFS:
+            streams: Dict[str, CameraStream] = {}
             for mode, param in (('color', color_param), ('depth', depth_param)):
+                compressed = mode == 'color' and use_compressed
+                if compressed:
+                    param = compressed_param
                 topic = str(self.get_parameter(param).value).strip()
                 if not topic:
                     continue
-                stream = ImageStream(
-                    name=f'{name}_{mode}',
-                    label=f'{label} {mode}',
-                    mode=mode,
-                    depth_min_m=depth_min,
-                    depth_max_m=depth_max,
-                )
+                if compressed:
+                    stream = CompressedImageStream(
+                        name=f'{name}_{mode}',
+                        label=f'{label} {mode}',
+                        mode=mode,
+                    )
+                    msg_type = CompressedImage
+                    topic_label = f'{label} {mode} (JPEG)'
+                else:
+                    stream = ImageStream(
+                        name=f'{name}_{mode}',
+                        label=f'{label} {mode}',
+                        mode=mode,
+                        depth_min_m=depth_min,
+                        depth_max_m=depth_max,
+                    )
+                    msg_type = Image
+                    topic_label = f'{label} {mode}'
                 streams[mode] = stream
                 self.create_subscription(
-                    Image,
+                    msg_type,
                     topic,
                     lambda msg, stream=stream: stream.update(msg),
                     image_qos,
                 )
-                self.get_logger().info(f'{label} {mode}: {topic}')
+                self.get_logger().info(f'{topic_label}: {topic}')
             if streams:
                 self.cameras[name] = {'label': label, 'streams': streams}
 
@@ -1090,7 +1119,7 @@ class WebappNode(Node):
             for name, data in self.cameras.items()
         }
 
-    def get_camera_stream(self, camera: str, mode: str) -> Optional[ImageStream]:
+    def get_camera_stream(self, camera: str, mode: str) -> Optional[CameraStream]:
         data = self.cameras.get(camera)
         if data is None:
             return None
@@ -1212,18 +1241,21 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
         async def frames():
             last_seq = -1
+            loop = asyncio.get_running_loop()
             while True:
-                jpeg, seq = image_stream.latest_jpeg()
-                if jpeg is not None and seq != last_seq:
-                    last_seq = seq
-                    yield (
-                        b'--frame\r\n'
-                        b'Content-Type: image/jpeg\r\n'
-                        b'Cache-Control: no-cache\r\n'
-                        b'Pragma: no-cache\r\n\r\n'
-                        + jpeg + b'\r\n'
-                    )
-                await asyncio.sleep(0.04)
+                if image_stream.sequence() != last_seq:
+                    jpeg, seq = await loop.run_in_executor(
+                        None, image_stream.latest_jpeg)
+                    if jpeg is not None and seq != last_seq:
+                        last_seq = seq
+                        yield (
+                            b'--frame\r\n'
+                            b'Content-Type: image/jpeg\r\n'
+                            b'Cache-Control: no-cache\r\n'
+                            b'Pragma: no-cache\r\n\r\n'
+                            + jpeg + b'\r\n'
+                        )
+                await asyncio.sleep(0.001)
 
         return StreamingResponse(
             frames(),
