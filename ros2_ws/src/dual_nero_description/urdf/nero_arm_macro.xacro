@@ -2,17 +2,14 @@
 <!--
   nero_arm_macro.xacro
 
-  Reusable xacro macro for one AgileX Nero 7-DoF arm with Pika-compatible
-  gripper flange + gripper links. Mirrors the contents of the upstream
-  files, namespaced by a prefix so the macro can be instantiated twice in
-  a dual-arm composition:
+  Reusable xacro macro for one AgileX Nero 7-DoF arm. Mirrors the upstream
+  arm description, namespaced by a prefix so the macro can be instantiated
+  twice in a dual-arm composition:
 
     src/agx_arm_description/agx_arm_urdf/nero/urdf/nero_description.urdf
       - base_link, link1..link7, joint1..joint7
-    src/agx_arm_description/agx_arm_urdf/nero/urdf/nero_with_gripper_flange_description.xacro
-      - gripper_flange + fixed joint from link7
-    src/agx_arm_description/agx_arm_urdf/nero/urdf/nero_with_gripper_description.xacro
-      - gripper_base + gripper_link1/2 + prismatic joints
+  When include_gripper is true, the CRT CTAG2F90D 90 mm gripper macro is
+  attached to link7 at the NERO tool flange.
 
   Upstream files are left untouched so `git pull upstream` stays conflict-
   free. Mesh paths reference the upstream `agx_arm_description` package
@@ -25,6 +22,8 @@
       </xacro:nero_arm>
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find dual_nero_description)/urdf/crt_ctag2f90d_gripper_macro.xacro"/>
 
   <xacro:macro name="nero_arm" params="prefix parent include_gripper *origin">
 
@@ -170,7 +169,7 @@
       <parent link="${prefix}link3"/>
       <child  link="${prefix}link4"/>
       <axis xyz="0 0 1"/>
-      <limit lower="-1.01" upper="2.200" effort="100" velocity="5"/>
+      <limit lower="-1.01" upper="2.14" effort="100" velocity="5"/>
     </joint>
 
     <link name="${prefix}link5">
@@ -226,7 +225,7 @@
       <parent link="${prefix}link5"/>
       <child  link="${prefix}link6"/>
       <axis xyz="0 0 1"/>
-      <limit lower="-0.73" upper="0.95" effort="100" velocity="5"/>
+      <limit lower="-0.7330383" upper="0.8726646" effort="100" velocity="5"/>
     </joint>
 
     <link name="${prefix}link7">
@@ -257,123 +256,9 @@
     </joint>
 
     <xacro:if value="${include_gripper}">
-    <!-- ================================================================ -->
-    <!--  gripper_flange                                                   -->
-    <!--  mirrors nero_with_gripper_flange_description.xacro               -->
-    <!-- ================================================================ -->
-
-    <link name="${prefix}gripper_flange">
-      <inertial>
-        <origin xyz="0.0 0.0 -0.00032" rpy="0 0 0"/>
-        <mass value="0.04771096"/>
-        <inertia ixx="2.697e-05" ixy="0" ixz="0" iyy="4.311e-05" iyz="0" izz="2.479e-05"/>
-      </inertial>
-      <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_flange.dae"/>
-        </geometry>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_flange.stl"/>
-        </geometry>
-      </collision>
-    </link>
-    <joint name="${prefix}gripper_flange_joint" type="fixed">
-      <origin xyz="0.032 0 -0.0235" rpy="-1.5708 0 -1.5708"/>
-      <parent link="${prefix}link7"/>
-      <child  link="${prefix}gripper_flange"/>
-    </joint>
-
-    <!-- ================================================================ -->
-    <!--  gripper_base + gripper_link1/2                                   -->
-    <!--  mirrors nero_with_gripper_description.xacro                      -->
-    <!-- ================================================================ -->
-
-    <link name="${prefix}gripper_base">
-      <inertial>
-        <origin xyz="-0.000183807162235591 8.05033155577911E-05 0.0321436689908876" rpy="0 0 0"/>
-        <mass value="0.45"/>
-        <inertia ixx="0.00092934" ixy="0.00000034" ixz="-0.00000738"
-                 iyy="0.00071447" iyz="0.00000005"  izz="0.00039442"/>
-      </inertial>
-      <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_base.dae"/>
-        </geometry>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_base.stl"/>
-        </geometry>
-      </collision>
-    </link>
-    <joint name="${prefix}gripper_base_joint" type="fixed">
-      <origin xyz="0 0 0.0055" rpy="0 0 0"/>
-      <parent link="${prefix}gripper_flange"/>
-      <child  link="${prefix}gripper_base"/>
-    </joint>
-
-    <link name="${prefix}gripper_link1">
-      <inertial>
-        <origin xyz="0.00065123185041968 -0.0491929869131989 0.00972258769184025" rpy="0 0 0"/>
-        <mass value="0.025"/>
-        <inertia ixx="0.00007371" ixy="-0.00000113" ixz="0.00000021"
-                 iyy="0.00000781" iyz="-0.00001372" izz="0.0000747"/>
-      </inertial>
-      <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_link1.dae"/>
-        </geometry>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_link1.stl"/>
-        </geometry>
-      </collision>
-    </link>
-    <joint name="${prefix}gripper_joint1" type="prismatic">
-      <origin xyz="0 0 0.1358" rpy="1.5707963 0 3.1415926"/>
-      <parent link="${prefix}gripper_base"/>
-      <child  link="${prefix}gripper_link1"/>
-      <axis xyz="0 0 1"/>
-      <limit lower="0" upper="0.05" effort="10" velocity="3"/>
-    </joint>
-
-    <link name="${prefix}gripper_link2">
-      <inertial>
-        <origin xyz="0.00065123185041968 -0.0491929869131989 0.00972258769184025" rpy="0 0 0"/>
-        <mass value="0.025"/>
-        <inertia ixx="0.00007371" ixy="-0.00000113" ixz="0.00000021"
-                 iyy="0.00000781" iyz="-0.00001372" izz="0.0000747"/>
-      </inertial>
-      <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/dae/gripper_link2.dae"/>
-        </geometry>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
-        <geometry>
-          <mesh filename="package://agx_arm_description/agx_arm_urdf/nero/meshes/gripper_link2.stl"/>
-        </geometry>
-      </collision>
-    </link>
-    <joint name="${prefix}gripper_joint2" type="prismatic">
-      <origin xyz="0 0 0.1358" rpy="1.5707963 0 0"/>
-      <parent link="${prefix}gripper_base"/>
-      <child  link="${prefix}gripper_link2"/>
-      <axis xyz="0 0 -1"/>
-      <limit lower="-0.05" upper="0" effort="10" velocity="3"/>
-    </joint>
-
+      <xacro:crt_ctag2f90d_gripper prefix="${prefix}" parent="${prefix}link7">
+        <origin xyz="0.031 0 -0.0235" rpy="-1.5708 0 -1.5708"/>
+      </xacro:crt_ctag2f90d_gripper>
     </xacro:if>
 
   </xacro:macro>

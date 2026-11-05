@@ -12,16 +12,16 @@
   <xacro:arg name="front_edge_offset" default="0.06"/>
   <xacro:arg name="left_base_yaw" default="3.141592653589793"/>
   <xacro:arg name="right_base_yaw" default="3.141592653589793"/>
-  <xacro:arg name="include_gripper" default="false"/>
+  <xacro:arg name="include_gripper" default="true"/>
   <xacro:arg name="left_tcp_x" default="0.0"/>
   <xacro:arg name="left_tcp_y" default="0.0"/>
-  <xacro:arg name="left_tcp_z" default="0.0"/>
+  <xacro:arg name="left_tcp_z" default="0.1708"/>
   <xacro:arg name="left_tcp_roll" default="0.0"/>
   <xacro:arg name="left_tcp_pitch" default="0.0"/>
   <xacro:arg name="left_tcp_yaw" default="0.0"/>
   <xacro:arg name="right_tcp_x" default="0.0"/>
   <xacro:arg name="right_tcp_y" default="0.0"/>
-  <xacro:arg name="right_tcp_z" default="0.0"/>
+  <xacro:arg name="right_tcp_z" default="0.1708"/>
   <xacro:arg name="right_tcp_roll" default="0.0"/>
   <xacro:arg name="right_tcp_pitch" default="0.0"/>
   <xacro:arg name="right_tcp_yaw" default="0.0"/>
@@ -89,7 +89,8 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </xacro:nero_arm>
 
-  <!-- Blank tool frames. tool0 is the arm flange; tcp_link is parameterized. -->
+  <!-- tool0 is the arm flange. The default TCP is the CTAG2F90D pinch point;
+       set *_tcp_z:=0.0 when include_gripper:=false. -->
   <link name="left_tool0"/>
   <joint name="left_link7_to_tool0" type="fixed">
     <parent link="left_link7"/>

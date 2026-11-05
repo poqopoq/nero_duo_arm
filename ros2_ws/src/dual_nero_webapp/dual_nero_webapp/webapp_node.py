@@ -8,6 +8,7 @@ The node exposes:
 * ``/api/config``                joint limits and camera metadata
 * ``/api/move``                  MoveIt planning and execution for one or both arms
 * ``/api/park``                  MoveIt return to the configured support pose
+* ``/api/gripper``               gripper open/close, speed, enable, and recovery
 * ``/api/clear_faults``          clear latched NERO joint-driver faults
 * ``/api/recover``               reset motion state and re-enable one arm
 * ``/robot_urdf``                xacro-expanded dual-arm URDF for the 3D view
@@ -44,7 +45,10 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from sensor_msgs.msg import CompressedImage, Image, JointState
+from std_msgs.msg import Float32, Int32
 from std_srvs.srv import Empty, SetBool, Trigger
 import uvicorn
 import xacro
@@ -57,15 +61,18 @@ SIDES = ('left', 'right')
 MOVE_TARGETS = ('left', 'right', 'both')
 CameraStream = Union[ImageStream, CompressedImageStream]
 LOCAL_JOINT_NAMES = [f'joint{index}' for index in range(1, 8)]
+GRIPPER_POSITION_MIN = 0
+GRIPPER_POSITION_MAX = 990
+GRIPPER_FEEDBACK_TIMEOUT_SEC = 1.5
 
 # Conservative intersection of the NERO driver limits and the dual-arm URDF.
-# joint2/joint4 match the two validated dual_nero_description relaxations so
-# the gravity-stable support pose can be commanded without clamping.
+# joint2 keeps the validated dual_nero_description relaxation; joint4 uses the
+# official 2.14 rad upper limit so MoveIt never plans into the firmware clamp.
 JOINT_LIMITS = [
     (-2.705260, 2.705260),   # joint1
     (-1.760000, 1.740000),   # joint2
     (-2.750000, 2.750000),   # joint3
-    (-1.010000, 2.200000),   # joint4
+    (-1.010000, 2.140000),   # joint4
     (-2.750000, 2.750000),   # joint5
     (-0.7330383, 0.8726646),  # joint6
     (-1.5707963, 1.5707963),  # joint7
@@ -213,6 +220,13 @@ class WebappNode(Node):
         self.declare_parameter('moveit_goal_tolerance_rad', 0.01)
         self.declare_parameter('moveit_result_timeout_sec', 120.0)
         self.declare_parameter('moveit_dry_run', True)
+        self.declare_parameter('left_gripper_prefix', '/left_gripper')
+        self.declare_parameter('right_gripper_prefix', '/right_gripper')
+        self.declare_parameter('allow_gripper_motion', False)
+        self.declare_parameter('gripper_position_min', GRIPPER_POSITION_MIN)
+        self.declare_parameter('gripper_position_max', GRIPPER_POSITION_MAX)
+        self.declare_parameter(
+            'gripper_feedback_timeout_sec', GRIPPER_FEEDBACK_TIMEOUT_SEC)
         self.declare_parameter(
             'trajectory_cancel_service',
             '/dual_nero_trajectory_bridge/cancel_motion')
@@ -226,10 +240,14 @@ class WebappNode(Node):
         self.declare_parameter('front_edge_offset', 0.06)
         self.declare_parameter('left_base_yaw', 3.141592653589793)
         self.declare_parameter('right_base_yaw', 3.141592653589793)
-        self.declare_parameter('include_gripper', False)
+        self.declare_parameter('include_gripper', True)
+        tcp_defaults = {
+            'x': 0.0, 'y': 0.0, 'z': 0.1708,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+        }
         for side in SIDES:
             for axis in ('x', 'y', 'z', 'roll', 'pitch', 'yaw'):
-                self.declare_parameter(f'{side}_tcp_{axis}', 0.0)
+                self.declare_parameter(f'{side}_tcp_{axis}', tcp_defaults[axis])
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -239,6 +257,21 @@ class WebappNode(Node):
         self.left_ns = self.get_parameter('left_ns').value
         self.right_ns = self.get_parameter('right_ns').value
         namespaces = {'left': self.left_ns, 'right': self.right_ns}
+        self.allow_gripper_motion = bool(
+            self.get_parameter('allow_gripper_motion').value)
+        self.gripper_position_min = int(
+            self.get_parameter('gripper_position_min').value)
+        self.gripper_position_max = int(
+            self.get_parameter('gripper_position_max').value)
+        if self.gripper_position_max <= self.gripper_position_min:
+            raise ValueError(
+                'gripper_position_max must be greater than gripper_position_min')
+        self.gripper_feedback_timeout = max(
+            0.1, float(self.get_parameter('gripper_feedback_timeout_sec').value))
+        self.gripper_prefixes = {
+            side: str(self.get_parameter(f'{side}_gripper_prefix').value).rstrip('/')
+            for side in SIDES
+        }
 
         self.joint_names = list(LOCAL_JOINT_NAMES)
         for side in SIDES:
@@ -260,6 +293,78 @@ class WebappNode(Node):
                 lambda msg, s=side: self._on_motor_status(s, msg),
                 qos,
             )
+            gripper_prefix = self.gripper_prefixes[side]
+            self.create_subscription(
+                Int32,
+                f'{gripper_prefix}/position',
+                lambda msg, s=side: self._on_gripper_position(s, msg),
+                qos,
+            )
+            self.create_subscription(
+                Float32,
+                f'{gripper_prefix}/width',
+                lambda msg, s=side: self._on_gripper_width(s, msg),
+                qos,
+            )
+            self.create_subscription(
+                JointState,
+                f'{gripper_prefix}/state',
+                lambda msg, s=side: self._on_gripper_state(s, msg),
+                qos,
+            )
+            self.create_subscription(
+                DiagnosticArray,
+                f'{gripper_prefix}/status',
+                lambda msg, s=side: self._on_gripper_status(s, msg),
+                qos,
+            )
+
+        self.gripper_position_publishers = {
+            side: self.create_publisher(
+                Int32, f'{self.gripper_prefixes[side]}/position_cmd', qos)
+            for side in SIDES
+        }
+        self.gripper_enable_clients = {
+            side: self.create_client(
+                SetBool, f'{self.gripper_prefixes[side]}/enable')
+            for side in SIDES
+        }
+        self.gripper_estop_clients = {
+            side: self.create_client(
+                Empty, f'{self.gripper_prefixes[side]}/emergency_stop')
+            for side in SIDES
+        }
+        self.gripper_clear_fault_clients = {
+            side: self.create_client(
+                Trigger, f'{self.gripper_prefixes[side]}/clear_fault')
+            for side in SIDES
+        }
+        self.gripper_clear_obstruction_clients = {
+            side: self.create_client(
+                Trigger, f'{self.gripper_prefixes[side]}/clear_obstruction')
+            for side in SIDES
+        }
+        self.gripper_parameter_clients = {
+            side: self.create_client(
+                SetParameters, f'/{side}_gripper_node/set_parameters')
+            for side in SIDES
+        }
+        self._gripper_lock = threading.Lock()
+        self._gripper: Dict[str, Dict] = {
+            side: {
+                'position': None,
+                'width_m': None,
+                'joint_rad': None,
+                'position_time': 0.0,
+                'width_time': 0.0,
+                'state_time': 0.0,
+                'driver_status_time': 0.0,
+                'driver_status': {},
+                'command_position': None,
+                'command_time': 0.0,
+            }
+            for side in SIDES
+        }
 
         initial_gate_open = bool(self.get_parameter('initial_gate_open').value)
         self._gate_open = {side: initial_gate_open for side in SIDES}
@@ -524,6 +629,146 @@ class WebappNode(Node):
             health['motor_faults'] = faults
             health['motor_status_time'] = time.monotonic()
 
+    def _on_gripper_position(self, side: str, msg: Int32) -> None:
+        with self._gripper_lock:
+            self._gripper[side]['position'] = int(msg.data)
+            self._gripper[side]['position_time'] = time.monotonic()
+
+    def _on_gripper_width(self, side: str, msg: Float32) -> None:
+        with self._gripper_lock:
+            self._gripper[side]['width_m'] = float(msg.data)
+            self._gripper[side]['width_time'] = time.monotonic()
+
+    def _on_gripper_state(self, side: str, msg: JointState) -> None:
+        joint = None
+        by_name = {
+            name: float(value) for name, value in zip(msg.name, msg.position)
+        }
+        joint = by_name.get(f'{side}_ctag_left_1_joint')
+        if joint is None and len(msg.position) == 1:
+            joint = float(msg.position[0])
+        with self._gripper_lock:
+            if joint is not None:
+                self._gripper[side]['joint_rad'] = joint
+            self._gripper[side]['state_time'] = time.monotonic()
+
+    def _on_gripper_status(self, side: str, msg: DiagnosticArray) -> None:
+        values = self._diagnostic_values(msg)
+        if not values:
+            return
+        with self._gripper_lock:
+            self._gripper[side]['driver_status'] = values
+            self._gripper[side]['driver_status_time'] = time.monotonic()
+
+    @staticmethod
+    def _feedback_age(now: float, timestamp: float) -> Optional[float]:
+        if timestamp <= 0.0:
+            return None
+        return round(max(0.0, now - timestamp), 2)
+
+    @staticmethod
+    def _optional_bool(values: Dict[str, str], key: str) -> Optional[bool]:
+        value = values.get(key)
+        if value == 'true':
+            return True
+        if value == 'false':
+            return False
+        return None
+
+    @staticmethod
+    def _optional_int(values: Dict[str, str], key: str) -> Optional[int]:
+        try:
+            return int(float(values[key]))
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _optional_float(values: Dict[str, str], key: str) -> Optional[float]:
+        try:
+            return float(values[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _gripper_snapshot(self, side: str, now: float) -> Dict:
+        with self._gripper_lock:
+            gripper = dict(self._gripper[side])
+        position_age = self._feedback_age(now, gripper['position_time'])
+        width_age = self._feedback_age(now, gripper['width_time'])
+        state_age = self._feedback_age(now, gripper['state_time'])
+        status_age = self._feedback_age(now, gripper['driver_status_time'])
+        driver_status_fresh = (
+            status_age is not None
+            and status_age <= self.gripper_feedback_timeout
+        )
+        driver_status = (
+            gripper['driver_status'] if driver_status_fresh else {})
+        driver_enabled = self._optional_bool(driver_status, 'enabled') is True
+        driver_state = (
+            driver_status.get('state')
+            if driver_status_fresh else 'unavailable')
+        driver_fault_reason = (
+            driver_status.get('fault_reason') or None
+            if driver_status_fresh else None)
+        driver_command = self._optional_int(
+            driver_status, 'command_position')
+        command_position = (
+            driver_command if driver_command is not None
+            else gripper['command_position'])
+        feedback_age = (
+            max(position_age, width_age)
+            if position_age is not None and width_age is not None else None
+        )
+        return {
+            'position': gripper['position'],
+            'width_m': gripper['width_m'],
+            'joint_rad': gripper['joint_rad'],
+            'position_age_sec': position_age,
+            'width_age_sec': width_age,
+            'joint_age_sec': state_age,
+            'feedback_age_sec': feedback_age,
+            'feedback_fresh': (
+                feedback_age is not None
+                and feedback_age <= self.gripper_feedback_timeout
+            ),
+            'driver_status_fresh': driver_status_fresh,
+            'driver_status_age_sec': status_age,
+            'driver_state': driver_state,
+            'driver_enabled': driver_enabled,
+            'auto_enable_on_command': (
+                self._optional_bool(driver_status, 'auto_enable_on_command')
+                is True),
+            'driver_fault_reason': driver_fault_reason,
+            'driver_last_error': (
+                driver_status.get('last_error') or None
+                if driver_status_fresh else None),
+            'estop_latched': (
+                self._optional_bool(driver_status, 'estop_latched') is True),
+            'motion_active': (
+                self._optional_bool(driver_status, 'motion_active') is True),
+            'driver_command_position': driver_command,
+            'motion_speed_percent': self._optional_int(
+                driver_status, 'motion_speed_percent'),
+            'motion_torque_percent': self._optional_int(
+                driver_status, 'motion_torque_percent'),
+            'motion_ramp_ms': self._optional_int(
+                driver_status, 'motion_ramp_ms'),
+            'torque_limit_supported': (
+                self._optional_bool(driver_status, 'torque_limit_supported')
+                is True),
+            'force_control_available': (
+                self._optional_bool(driver_status, 'force_control_available')
+                is True),
+            # Compatibility for older clients while the dashboard migrates
+            # to the explicit driver_* fields above.
+            'enable_requested': driver_enabled,
+            'command_position': command_position,
+            'command_age_sec': self._feedback_age(now, gripper['command_time'])
+            if gripper['command_time'] > 0.0 else None,
+            'motion_allowed': self.allow_gripper_motion,
+            'position_min': self.gripper_position_min,
+            'position_max': self.gripper_position_max,
+        }
+
     def snapshot(self) -> Dict[str, Dict]:
         now = time.monotonic()
         with self._latest_lock:
@@ -559,6 +804,7 @@ class WebappNode(Node):
             result[side]['gate_open'] = self._gate_open[side]
             result[side]['motor_enabled'] = self._motor_enabled[side]
             result[side]['health'] = health[side]
+            result[side]['gripper'] = self._gripper_snapshot(side, now)
         return result
 
     def motion_status(self) -> Dict:
@@ -573,6 +819,295 @@ class WebappNode(Node):
             'available': bool(self._move_client.server_is_ready()),
             'busy': self._motion_lock.locked(),
             'active_side': active_side,
+        }
+
+    def gripper_status(self) -> Dict:
+        return {
+            'position_min': self.gripper_position_min,
+            'position_max': self.gripper_position_max,
+            'open_position': self.gripper_position_min,
+            'closed_position': self.gripper_position_max,
+            'motion_allowed': self.allow_gripper_motion,
+            'feedback_timeout_sec': self.gripper_feedback_timeout,
+            'speed_percent_min': 1,
+            'speed_percent_max': 100,
+            'torque_percent_min': 1,
+            'torque_percent_max': 100,
+            'ramp_ms_min': 0,
+            'ramp_ms_max': 1000,
+            'force_control_available': False,
+            'prefixes': dict(self.gripper_prefixes),
+        }
+
+    def _gripper_motion_precheck(self, side: str) -> Optional[str]:
+        if side not in SIDES:
+            return f'unknown side: {side}'
+        if not self.allow_gripper_motion:
+            return (
+                'gripper motion is disabled in the webapp; restart with '
+                'gripper_allow_motion:=true and the driver with allow_motion:=true')
+        now = time.monotonic()
+        snapshot = self._gripper_snapshot(side, now)
+        if not snapshot['driver_status_fresh']:
+            return f'{side} gripper driver status is missing or stale'
+        if snapshot['driver_state'] == 'fault':
+            reason = snapshot['driver_fault_reason'] or snapshot['driver_last_error']
+            return f'{side} gripper has a latched fault: {reason or "unknown"}'
+        if not snapshot['driver_enabled'] and not snapshot['auto_enable_on_command']:
+            return (
+                f'{side} gripper motor is not enabled and the driver has '
+                'auto_enable_on_command=false; enable the motor at launch '
+                'or through the driver enable service')
+        if snapshot['position'] is None or snapshot['width_m'] is None:
+            return f'{side} gripper feedback is missing'
+        if not snapshot['feedback_fresh']:
+            return (
+                f'{side} gripper feedback is stale '
+                f"({snapshot['feedback_age_sec']}s old)")
+        return None
+
+    def set_gripper_enabled(
+        self,
+        side: str,
+        enabled: bool,
+        timeout: float = 2.0,
+    ) -> Dict:
+        if side not in SIDES:
+            return {'ok': False, 'error': f'unknown side: {side}'}
+        if enabled and not self.allow_gripper_motion:
+            return {
+                'ok': False,
+                'error': (
+                    'gripper motion is disabled in the webapp; restart with '
+                    'gripper_allow_motion:=true and the driver with '
+                    'allow_motion:=true'),
+            }
+        client = self.gripper_enable_clients[side]
+        if not client.wait_for_service(timeout_sec=timeout):
+            return {
+                'ok': False,
+                'error': f'{side} gripper enable service is unavailable',
+            }
+        request = SetBool.Request()
+        request.data = bool(enabled)
+        future = client.call_async(request)
+        if not self._wait_future(future, timeout):
+            return {
+                'ok': False,
+                'error': f'{side} gripper enable service did not respond in time',
+            }
+        try:
+            response = future.result()
+        except Exception as exc:  # noqa: BLE001
+            return {'ok': False, 'error': f'{side} gripper enable failed: {exc}'}
+        if response is None or not bool(response.success):
+            message = (
+                str(response.message) if response is not None and response.message
+                else 'driver rejected the request')
+            return {'ok': False, 'error': f'{side} gripper enable failed: {message}'}
+        return {
+            'ok': True,
+            'side': side,
+            'enabled': bool(enabled),
+            'message': (
+                f'{side} gripper motor '
+                + ('enable request sent' if enabled else 'disable request sent')),
+        }
+
+    def set_gripper_config(
+        self,
+        side: str,
+        speed_percent: Optional[int] = None,
+        torque_percent: Optional[int] = None,
+        ramp_ms: Optional[int] = None,
+        timeout: float = 2.0,
+    ) -> Dict:
+        if side not in SIDES:
+            return {'ok': False, 'error': f'unknown side: {side}'}
+        values = {
+            'motion_speed_percent': speed_percent,
+            'motion_torque_percent': torque_percent,
+            'motion_ramp_ms': ramp_ms,
+        }
+        limits = {
+            'motion_speed_percent': (1, 100),
+            'motion_torque_percent': (1, 100),
+            'motion_ramp_ms': (0, 1000),
+        }
+        parameters = []
+        for name, value in values.items():
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return {'ok': False, 'error': f'{name} must be an integer'}
+            if float(value) != int(value):
+                return {'ok': False, 'error': f'{name} must be an integer'}
+            value = int(value)
+            low, high = limits[name]
+            if not low <= value <= high:
+                return {
+                    'ok': False,
+                    'error': f'{name} must be {low}..{high}',
+                }
+            parameter = Parameter()
+            parameter.name = name
+            parameter.value = ParameterValue(
+                type=ParameterType.PARAMETER_INTEGER,
+                integer_value=value,
+            )
+            parameters.append(parameter)
+        if not parameters:
+            return {'ok': False, 'error': 'no gripper configuration values supplied'}
+
+        client = self.gripper_parameter_clients[side]
+        if not client.wait_for_service(timeout_sec=timeout):
+            return {
+                'ok': False,
+                'error': f'/{side}_gripper_node/set_parameters is unavailable',
+            }
+        request = SetParameters.Request()
+        request.parameters = parameters
+        future = client.call_async(request)
+        if not self._wait_future(future, timeout):
+            return {
+                'ok': False,
+                'error': f'{side} gripper configuration timed out',
+            }
+        try:
+            response = future.result()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'ok': False,
+                'error': f'{side} gripper configuration failed: {exc}',
+            }
+        if response is None:
+            return {'ok': False, 'error': 'empty gripper configuration response'}
+        rejected = [
+            result.reason or 'rejected'
+            for result in response.results
+            if not result.successful
+        ]
+        if rejected:
+            return {
+                'ok': False,
+                'error': f'{side} gripper configuration rejected: {rejected[0]}',
+            }
+        return {
+            'ok': True,
+            'side': side,
+            'speed_percent': speed_percent,
+            'torque_percent': torque_percent,
+            'ramp_ms': ramp_ms,
+            'message': f'{side}: gripper motion configuration updated',
+        }
+
+    def move_gripper(self, side: str, position: int) -> Dict:
+        if isinstance(position, bool) or not isinstance(position, (int, float)):
+            return {'ok': False, 'error': 'gripper position must be an integer'}
+        if float(position) != int(position):
+            return {'ok': False, 'error': 'gripper position must be an integer'}
+        position = int(position)
+        error = self._gripper_motion_precheck(side)
+        if error is not None:
+            return {'ok': False, 'error': error}
+        if not self.gripper_position_min <= position <= self.gripper_position_max:
+            return {
+                'ok': False,
+                'error': (
+                    f'gripper position must be '
+                    f'{self.gripper_position_min}..{self.gripper_position_max}'),
+            }
+        message = Int32()
+        message.data = position
+        self.gripper_position_publishers[side].publish(message)
+        with self._gripper_lock:
+            self._gripper[side]['command_position'] = position
+            self._gripper[side]['command_time'] = time.monotonic()
+        self.get_logger().info(
+            f'{side.capitalize()} gripper position command: {position}')
+        return {
+            'ok': True,
+            'side': side,
+            'position': position,
+            'message': f'{side} gripper position command sent: {position}',
+        }
+
+    def clear_gripper_fault(self, side: str, timeout: float = 2.0) -> Dict:
+        if side not in SIDES:
+            return {'ok': False, 'error': f'unknown side: {side}'}
+        client = self.gripper_clear_fault_clients[side]
+        if not client.wait_for_service(timeout_sec=timeout):
+            return {
+                'ok': False,
+                'error': f'{side} gripper clear_fault service is unavailable',
+            }
+        future = client.call_async(Trigger.Request())
+        if not self._wait_future(future, timeout):
+            return {
+                'ok': False,
+                'error': f'{side} gripper clear_fault did not respond in time',
+            }
+        try:
+            response = future.result()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'ok': False,
+                'error': f'{side} gripper clear_fault failed: {exc}',
+            }
+        if response is None or not bool(response.success):
+            message = (
+                str(response.message)
+                if response is not None and response.message
+                else 'driver rejected the fault clear request'
+            )
+            return {
+                'ok': False,
+                'error': f'{side} gripper clear_fault failed: {message}',
+            }
+        return {
+            'ok': True,
+            'side': side,
+            'message': str(response.message),
+        }
+
+    def clear_gripper_obstruction(self, side: str, timeout: float = 10.0) -> Dict:
+        if side not in SIDES:
+            return {'ok': False, 'error': f'unknown side: {side}'}
+        client = self.gripper_clear_obstruction_clients[side]
+        if not client.wait_for_service(timeout_sec=min(2.0, timeout)):
+            return {
+                'ok': False,
+                'error': (
+                    f'{side} gripper clear_obstruction service is unavailable'),
+            }
+        future = client.call_async(Trigger.Request())
+        if not self._wait_future(future, timeout):
+            return {
+                'ok': False,
+                'error': (
+                    f'{side} gripper clear_obstruction did not respond in time'),
+            }
+        try:
+            response = future.result()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'ok': False,
+                'error': f'{side} gripper clear_obstruction failed: {exc}',
+            }
+        if response is None or not bool(response.success):
+            message = (
+                str(response.message)
+                if response is not None and response.message
+                else 'driver rejected the obstruction recovery request'
+            )
+            return {
+                'ok': False,
+                'error': f'{side} gripper clear_obstruction failed: {message}',
+            }
+        return {
+            'ok': True,
+            'side': side,
+            'message': str(response.message),
         }
 
     @staticmethod
@@ -1039,6 +1574,8 @@ class WebappNode(Node):
     def emergency_stop(self, side: str, timeout: float = 2.0) -> Dict:
         if side not in SIDES:
             return {'ok': False, 'error': f'unknown side: {side}'}
+        gripper_stop = self._gripper_emergency_stop(
+            side, timeout=min(0.5, timeout))
         client = self._get_service_client(side, 'estop')
         if not client.wait_for_service(timeout_sec=1.0):
             namespace = self._namespace_for(side)
@@ -1053,6 +1590,7 @@ class WebappNode(Node):
                 'stop_confirmed': False,
                 'gate_closed': gate_closed,
                 'gate_error': gate_error,
+                'gripper_stop': gripper_stop,
                 'error': stop_error,
             }
         future = client.call_async(Empty.Request())
@@ -1080,6 +1618,13 @@ class WebappNode(Node):
             errors.append(stop_error)
         if not gate_closed:
             errors.append(f'control gate close failed: {gate_error}')
+        if (
+            gripper_stop.get('attempted')
+            and not gripper_stop.get('confirmed')
+        ):
+            errors.append(
+                f'gripper emergency stop failed: '
+                f'{gripper_stop.get("error")}')
         return {
             'ok': stop_confirmed and gate_closed,
             'side': side,
@@ -1087,8 +1632,34 @@ class WebappNode(Node):
             'stop_confirmed': stop_confirmed,
             'gate_closed': gate_closed,
             'gate_error': gate_error,
+            'gripper_stop': gripper_stop,
             'error': '; '.join(errors) if errors else None,
         }
+
+    def _gripper_emergency_stop(self, side: str, timeout: float = 0.5) -> Dict:
+        client = self.gripper_estop_clients[side]
+        if not client.wait_for_service(timeout_sec=min(0.25, timeout)):
+            return {
+                'attempted': False,
+                'confirmed': False,
+                'error': f'{side} gripper emergency_stop unavailable',
+            }
+        future = client.call_async(Empty.Request())
+        if not self._wait_future(future, timeout):
+            return {
+                'attempted': True,
+                'confirmed': False,
+                'error': f'{side} gripper emergency_stop timed out',
+            }
+        try:
+            future.result()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'attempted': True,
+                'confirmed': False,
+                'error': f'{side} gripper emergency_stop failed: {exc}',
+            }
+        return {'attempted': True, 'confirmed': True, 'error': None}
 
     def emergency_stop_all(self) -> Dict:
         results: Dict[str, Dict] = {}
@@ -1165,6 +1736,7 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
     app = FastAPI(title='Dual NERO webapp')
 
     agx_share = Path(get_package_share_directory('agx_arm_description'))
+    description_share = Path(get_package_share_directory('dual_nero_description'))
 
     @app.get('/static/{filename:path}')
     async def static_file(filename: str) -> FileResponse:
@@ -1176,6 +1748,10 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
     @app.get('/pkg/agx_arm_description/{filename:path}')
     async def agx_asset(filename: str) -> FileResponse:
         return FileResponse(_asset_path(agx_share, filename))
+
+    @app.get('/pkg/dual_nero_description/{filename:path}')
+    async def description_asset(filename: str) -> FileResponse:
+        return FileResponse(_asset_path(description_share, filename))
 
     @app.get('/', response_class=HTMLResponse)
     async def index() -> HTMLResponse:
@@ -1211,6 +1787,7 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
             'initial_gate_open': bool(node.get_parameter('initial_gate_open').value),
             'park': node.park_status(),
             'motion': node.motion_status(),
+            'gripper': node.gripper_status(),
         }
 
     @app.get('/api/state')
@@ -1224,6 +1801,16 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
     @app.get('/api/motion')
     async def motion_status() -> Dict:
         return node.motion_status()
+
+    @app.get('/api/gripper')
+    async def gripper_status() -> Dict:
+        return {
+            'config': node.gripper_status(),
+            'state': {
+                side: node._gripper_snapshot(side, time.monotonic())
+                for side in SIDES
+            },
+        }
 
     @app.get('/api/cameras')
     async def cameras() -> Dict:
@@ -1282,6 +1869,32 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
         if side not in SIDES:
             return {'ok': False, 'error': f'unknown side: {side}'}
         return await run_blocking(node.set_enabled, side, bool(body.get('enabled', False)))
+
+    @app.post('/api/gripper')
+    async def gripper(request: Request) -> Dict:
+        body = await request.json()
+        side = str(body.get('side', ''))
+        if side not in SIDES:
+            return {'ok': False, 'error': f'unknown side: {side}'}
+        action = str(body.get('action', ''))
+        if action == 'position':
+            return await run_blocking(node.move_gripper, side, body.get('position'))
+        if action == 'clear_fault':
+            return await run_blocking(node.clear_gripper_fault, side)
+        if action == 'clear_obstruction':
+            return await run_blocking(node.clear_gripper_obstruction, side)
+        if action == 'configure':
+            return await run_blocking(
+                node.set_gripper_config,
+                side,
+                body.get('speed_percent'),
+                body.get('torque_percent'),
+                body.get('ramp_ms'),
+            )
+        if action == 'enable':
+            return await run_blocking(
+                node.set_gripper_enabled, side, bool(body.get('enabled', False)))
+        return {'ok': False, 'error': f'unknown gripper action: {action}'}
 
     @app.post('/api/clear_faults')
     async def clear_faults(request: Request) -> Dict:

@@ -9,6 +9,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 SIDES = ('left', 'right')
+J4_INDEX = 3
+J4_MAX = 2.14
 ROOT = Path(os.environ.get('NERO_DUO_ROOT', Path(__file__).resolve().parents[2]))
 OUTPUT = ROOT / 'deployment' / 'config' / 'support_pose.yaml'
 
@@ -43,15 +45,25 @@ if not node.ready():
     print('SUPPORT_CAPTURE_FAILED')
     node.destroy_node(); rclpy.shutdown(); raise SystemExit(2)
 
+captured = {side: list(node.values[side]) for side in SIDES}
+for side in SIDES:
+    if captured[side][J4_INDEX] > J4_MAX:
+        print(
+            f'{side} joint4 feedback {captured[side][J4_INDEX]:.9f} exceeds '
+            f'{J4_MAX:.2f}; clamping for the support pose')
+        captured[side][J4_INDEX] = J4_MAX
+
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 with OUTPUT.open('w', encoding='utf-8') as f:
     f.write('# Canonical support pose captured from the live NERO joint feedback.\n')
+    f.write('# Joint 4 uses the deployment cap of 2.14 rad'
+            ' (native upper bound: 2.146755).\n')
     f.write('support_pose:\n')
     for side in SIDES:
-        for idx, value in enumerate(node.values[side], start=1):
+        for idx, value in enumerate(captured[side], start=1):
             f.write(f'  {side}_joint{idx}: {value:.9f}\n')
 print('SUPPORT_POSE_SAVED', OUTPUT)
 for side in SIDES:
-    print(side, [round(v, 6) for v in node.values[side]])
+    print(side, [round(v, 6) for v in captured[side]])
 node.destroy_node()
 rclpy.shutdown()

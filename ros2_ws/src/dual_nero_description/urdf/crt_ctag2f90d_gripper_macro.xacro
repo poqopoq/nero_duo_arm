@@ -1,0 +1,151 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+    CRT CTAG2F90D 90 mm parallel gripper.
+
+    Geometry and inertial data are adapted from the vendor visualization
+    package crt_ctag2f90d_gripper_visualization. Link and joint names are
+    prefixed so the macro can be instantiated for both NERO arms.
+
+    The base frame is the mounting face. Its +Z axis points from the wrist
+    toward the fingertips. The default q=0 pose is fully open; q=-0.90017 rad
+    is the maximum allowed closing command (0.9 mm pad opening). Full mechanical
+    closure is q=-0.91 rad, but commands stop short to protect the force sensor.
+    The four-bar links follow the main joint through <mimic>.
+  -->
+
+  <material name="crt_gripper_grey">
+    <color rgba="0.615686274509804 0.63921568627451 0.674509803921569 1.0"/>
+  </material>
+
+  <xacro:macro name="crt_gripper_link"
+               params="name mesh mass com_x com_y com_z ixx ixy ixz iyy iyz izz">
+    <link name="${name}">
+      <inertial>
+        <origin xyz="${com_x} ${com_y} ${com_z}" rpy="0 0 0"/>
+        <mass value="${mass}"/>
+        <inertia ixx="${ixx}" ixy="${ixy}" ixz="${ixz}"
+                 iyy="${iyy}" iyz="${iyz}" izz="${izz}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/crt_ctag2f90d/${mesh}"/>
+        </geometry>
+        <material name="crt_gripper_grey"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/crt_ctag2f90d/${mesh}"/>
+        </geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <xacro:macro name="crt_ctag2f90d_gripper" params="prefix parent *origin">
+    <joint name="${prefix}ctag_mount_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+      <parent link="${parent}"/>
+      <child link="${prefix}ctag_base_link"/>
+    </joint>
+
+    <xacro:crt_gripper_link
+        name="${prefix}ctag_base_link" mesh="base_link.STL" mass="0.953455976099042"
+        com_x="3.84872289645122E-06" com_y="-4.41448135187968E-05" com_z="0.0553867866771657"
+        ixx="0.00177628843801648" ixy="-8.19676071724033E-10" ixz="-3.00472546877836E-08"
+        iyy="0.00187418176115802" iyz="-3.98009757950365E-07" izz="0.000875448946929789"/>
+
+    <xacro:crt_gripper_link
+        name="${prefix}ctag_left_1_link" mesh="Left_1_Link.STL" mass="0.0309052898336316"
+        com_x="0.0202604071221892" com_y="0.0187577877882694" com_z="2.20960470526592E-14"
+        ixx="4.31215511677353E-06" ixy="-4.26885891149938E-06" ixz="-2.46366459463114E-13"
+        iyy="4.9707522189533E-06" iyz="-2.22956217486463E-13" izz="9.19223373728405E-06"/>
+    <joint name="${prefix}ctag_left_1_joint" type="revolute">
+      <origin xyz="0.030141 0 0.10415" rpy="1.5708 0 0"/>
+      <parent link="${prefix}ctag_base_link"/>
+      <child link="${prefix}ctag_left_1_link"/>
+      <axis xyz="0 0 -1"/>
+      <limit lower="-0.90017" upper="0" effort="10" velocity="10"/>
+    </joint>
+
+    <xacro:crt_gripper_link
+        name="${prefix}ctag_left_support_link" mesh="Left_Support_Link.STL" mass="0.0828693338705683"
+        com_x="-0.0177925864232372" com_y="0.0354308985297288" com_z="-3.45319167880073E-05"
+        ixx="2.73957553511085E-05" ixy="7.04281105447926E-06" ixz="-1.08446711519888E-11"
+        iyy="6.34802949004157E-06" iyz="1.18385736891846E-11" izz="2.83129237821216E-05"/>
+    <joint name="${prefix}ctag_left_support_joint" type="revolute">
+      <origin xyz="0.040359 0.037365 0" rpy="0 0 0"/>
+      <parent link="${prefix}ctag_left_1_link"/>
+      <child link="${prefix}ctag_left_support_link"/>
+      <axis xyz="0 0 -1"/>
+      <limit lower="0" upper="0.90017" effort="10" velocity="10"/>
+      <mimic joint="${prefix}ctag_left_1_joint" multiplier="-1" offset="0"/>
+    </joint>
+
+    <xacro:crt_gripper_link
+        name="${prefix}ctag_left_2_link" mesh="Left_2_Link.STL" mass="0.0309052898336314"
+        com_x="0.0202604071221829" com_y="0.0187577877878552" com_z="2.21631403129407E-14"
+        ixx="4.31215511674771E-06" ixy="-4.26885891149736E-06" ixz="-2.46366467847417E-13"
+        iyy="4.97075221897906E-06" iyz="-2.22956225772745E-13" izz="9.19223373728399E-06"/>
+    <joint name="${prefix}ctag_left_2_joint" type="revolute">
+      <origin xyz="0.016 0 0.121" rpy="1.5708 0 0"/>
+      <parent link="${prefix}ctag_base_link"/>
+      <child link="${prefix}ctag_left_2_link"/>
+      <axis xyz="0 0 -1"/>
+      <limit lower="-0.90017" upper="0" effort="10" velocity="10"/>
+      <mimic joint="${prefix}ctag_left_1_joint" multiplier="1" offset="0"/>
+    </joint>
+
+    <xacro:crt_gripper_link
+        name="${prefix}ctag_right_2_link" mesh="Right_2_Link.STL" mass="0.0309052898336316"
+        com_x="0.0202604071211299" com_y="0.0187577877883374" com_z="2.11370080968728E-14"
+        ixx="4.31215511674775E-06" ixy="-4.2688589114974E-06" ixz="-2.46366382911271E-13"
+        iyy="4.9707522189791E-06" iyz="-2.22956145920037E-13" izz="9.19223373728407E-06"/>
+    <joint name="${prefix}ctag_right_2_joint" type="revolute">
+      <origin xyz="-0.016 0 0.121" rpy="1.5708 0 3.1416"/>
+      <parent link="${prefix}ctag_base_link"/>
+      <child link="${prefix}ctag_right_2_link"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="0" upper="0.90017" effort="10" velocity="10"/>
+      <mimic joint="${prefix}ctag_left_1_joint" multiplier="-1" offset="0"/>
+    </joint>
+
+    <xacro:crt_gripper_link
+        name="${prefix}ctag_right_1_link" mesh="Right_1_Link.STL" mass="0.0309052898336314"
+        com_x="0.0202604071211989" com_y="0.0187577877891044" com_z="2.11409547592425E-14"
+        ixx="4.3121551167735E-06" ixy="-4.26885891149935E-06" ixz="-2.46366386343243E-13"
+        iyy="4.97075221895327E-06" iyz="-2.22956149418598E-13" izz="9.19223373728398E-06"/>
+    <joint name="${prefix}ctag_right_1_joint" type="revolute">
+      <origin xyz="-0.030141 0 0.10415" rpy="1.5708 0 3.1416"/>
+      <parent link="${prefix}ctag_base_link"/>
+      <child link="${prefix}ctag_right_1_link"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="0" upper="0.90017" effort="10" velocity="10"/>
+      <mimic joint="${prefix}ctag_left_1_joint" multiplier="-1" offset="0"/>
+    </joint>
+
+    <xacro:crt_gripper_link
+        name="${prefix}ctag_right_support_link" mesh="Right_Support_Link.STL" mass="0.082869359674167"
+        com_x="-0.0177925878352495" com_y="0.0354308970643828" com_z="-2.81887513877937E-08"
+        ixx="2.73957568837024E-05" ixy="7.04281063834988E-06" ixz="-9.62685216616108E-12"
+        iyy="6.34803242941661E-06" iyz="1.28138996747735E-11" izz="2.83129239152281E-05"/>
+    <joint name="${prefix}ctag_right_support_joint" type="revolute">
+      <origin xyz="0.040359 0.037365 0" rpy="0 0 0"/>
+      <parent link="${prefix}ctag_right_1_link"/>
+      <child link="${prefix}ctag_right_support_link"/>
+      <axis xyz="0 0 -1"/>
+      <limit lower="0" upper="0.90017" effort="10" velocity="10"/>
+      <mimic joint="${prefix}ctag_left_1_joint" multiplier="-1" offset="0"/>
+    </joint>
+
+    <!-- Pinch point halfway along the finger pads. -->
+    <link name="${prefix}ctag_tcp_link"/>
+    <joint name="${prefix}ctag_tcp_joint" type="fixed">
+      <origin xyz="0 0 0.1708" rpy="0 0 0"/>
+      <parent link="${prefix}ctag_base_link"/>
+      <child link="${prefix}ctag_tcp_link"/>
+    </joint>
+  </xacro:macro>
+</robot>

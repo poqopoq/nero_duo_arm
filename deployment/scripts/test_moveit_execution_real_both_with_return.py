@@ -15,6 +15,7 @@ SIDES = ('left', 'right')
 NAMES = [f'{side}_joint{i}' for side in SIDES for i in range(1, 8)]
 DELTAS = {'left': 0.03, 'right': -0.03}
 POSITION_TOLERANCE = 0.03
+J4_MAX = 2.14
 ROOT = Path(os.environ.get('NERO_DUO_ROOT', Path(__file__).resolve().parents[2]))
 SUPPORT_FILE = ROOT / 'deployment' / 'config' / 'support_pose.yaml'
 
@@ -119,6 +120,13 @@ if not node.move_client.wait_for_server(timeout_sec=10.0):
     node.destroy_node(); rclpy.shutdown(); raise SystemExit(3)
 
 support = [node.current[name] for name in NAMES]
+for name in ('left_joint4', 'right_joint4'):
+    index = NAMES.index(name)
+    if support[index] > J4_MAX:
+        print(
+            f'{name} feedback {support[index]:.9f} exceeds {J4_MAX:.2f}; '
+            'clamping the support target')
+        support[index] = J4_MAX
 target = list(support)
 for side in SIDES:
     idx = NAMES.index(f'{side}_joint7')
@@ -128,7 +136,8 @@ print('SUPPORT_POSE', [round(x, 6) for x in support])
 print('TEST_TARGET', [round(x, 6) for x in target])
 SUPPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
 with SUPPORT_FILE.open('w', encoding='utf-8') as f:
-    f.write('# Captured before the real dual-arm execution test\n')
+    f.write('# Captured before the real dual-arm execution test;'
+            ' joint4 <= 2.14 (deployment cap; native 2.146755)\n')
     f.write('support_pose:\n')
     for name, value in zip(NAMES, support):
         f.write(f'  {name}: {value:.9f}\n')

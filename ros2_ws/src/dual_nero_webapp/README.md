@@ -9,6 +9,8 @@ Browser dashboard for the table-mounted dual NERO workspace. It provides:
 - per-arm and combined **Park** targets loaded from the installed support-pose YAML;
 - webapp-side gate, motor-enable, and emergency-stop controls;
 - per-arm arm/motor health plus **Clear faults** and guarded **Recover arm**;
+- per-gripper **Open**, **Close**, arbitrary-position **Apply grip**, speed,
+  and one-button **Clear obstruction** controls;
 - scene, left-wrist, and right-wrist camera tiles with color/depth switching;
 - a compact synchronized dual-arm toolbar, independently scrollable desktop
   controls, and a responsive camera gallery that preserves the complete image
@@ -106,6 +108,15 @@ feedback fresh, and the browser asks for confirmation that the arm is
 physically supported. It then resets the motion controller, clears joint
 faults, and re-enables motors. It does not send the arm to Park.
 
+Each gripper panel provides **Open**, **Close**, arbitrary-position
+**Apply grip**, a speed percentage, and **Clear obstruction**. Open/Close/Apply
+rely on the gripper driver's default `auto_enable_on_command=true`; no separate
+enable step is required. **Clear obstruction** first stops the jaws, resets the
+latched hardware alarm, then commands them to open. It asks for confirmation
+because the open command produces motion. If a move is rejected because
+`auto_enable_on_command=false`, enable the gripper at launch or through the
+driver's enable service.
+
 Joint positions are clamped server-side to the conservative intersection of
 the NERO driver and URDF limits before the MoveIt goal is built. The webapp
 gate state is local to this process; if another tool changes
@@ -152,6 +163,7 @@ Override any topic with a ROS parameter (for example
 | `/api/motion` | MoveIt availability and busy/active side |
 | `/api/control_gate` | Open or close one driver control gate |
 | `/api/enable` | Enable or disable one arm's motors |
+| `/api/gripper` | Gripper position, speed, enable, and obstruction recovery |
 | `/api/clear_faults` | Send the NERO joint fault-clear command for one arm |
 | `/api/recover` | Reset motion state, clear faults, and re-enable one arm |
 | `/api/move` | Plan and execute one arm or both arms through MoveIt |
@@ -164,8 +176,11 @@ Override any topic with a ROS parameter (for example
 | `/robot_urdf` | Xacro-expanded URDF for the browser 3D view |
 
 The viewer loads Three.js and `urdf-loader` from CDN URLs in `static/index.html`.
-Joint and safety controls still work if the CDN is unavailable, but the 3D view
-will not load. The dashboard has no authentication; keep it on a trusted LAN.
+The model follows the 10 Hz joint and gripper feedback by default. Moving a
+joint slider temporarily previews the commanded arm pose, then returns to live
+feedback after about 1.2 seconds. Joint and safety controls still work if the
+CDN is unavailable, but the 3D view will not load. The dashboard has no
+authentication; keep it on a trusted LAN.
 
 ## Not implemented yet
 
@@ -173,6 +188,7 @@ will not load. The dashboard has no authentication; keep it on a trusted LAN.
 - camera TF integration into MoveIt's `world` planning frame;
 - trajectory preview, collision pre-check UI, and browser trajectory display;
 - Cartesian, IK, and named-pose targets;
-- gripper planning groups and gripper controls;
+- gripper closed-loop force control (open/close, speed, e-stop, and obstruction
+  recovery are implemented);
 - velocity/acceleration controls in the UI (currently fixed at `0.05`);
 - full hardware diagnostics, execution progress, authentication, and TLS.

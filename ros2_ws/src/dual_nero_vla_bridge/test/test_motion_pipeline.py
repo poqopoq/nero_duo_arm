@@ -18,6 +18,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Float32, Int32
 
 from dual_nero_vla_bridge.protocol import recv_frame, send_frame
 from dual_nero_vla_bridge.vla_bridge import NeroVlaBridge
@@ -85,6 +86,7 @@ class FakeFeedback(Node):
         super().__init__('fake_vla_feedback')
         self.tcp_pub = self.create_publisher(PoseStamped, '/left/feedback/tcp_pose', 10)
         self.joint_pub = self.create_publisher(JointState, '/left/feedback/joint_states', 10)
+        self.gripper_pub = self.create_publisher(Float32, '/left_gripper/width', 10)
         self.create_timer(0.05, self._publish)
 
     def _publish(self) -> None:
@@ -102,6 +104,21 @@ class FakeFeedback(Node):
         joints.name = [f'joint{index}' for index in range(1, 8)]
         joints.position = [0.0] * 7
         self.joint_pub.publish(joints)
+
+        gripper = Float32()
+        gripper.data = 0.09
+        self.gripper_pub.publish(gripper)
+
+
+class FakeGripperCommandSink(Node):
+    def __init__(self) -> None:
+        super().__init__('fake_gripper_command_sink')
+        self.commands: list[int] = []
+        self.create_subscription(
+            Int32, '/left_gripper/position_cmd', self._handle, 10)
+
+    def _handle(self, msg: Int32) -> None:
+        self.commands.append(int(msg.data))
 
 
 class BridgeClient:
@@ -127,16 +144,24 @@ class MotionPipelineTest(unittest.TestCase):
     def tearDownClass(cls) -> None:
         rclpy.shutdown()
 
-    def _start(self, mode: str, ik_mode: str = 'success', allow_real_motion: bool = False):
+    def _start(
+        self,
+        mode: str,
+        ik_mode: str = 'success',
+        allow_real_motion: bool = False,
+        allow_gripper_motion: bool = False,
+    ):
         self.tempdir = tempfile.TemporaryDirectory(prefix='nero-vla-motion-test-')
         socket_path = os.path.join(self.tempdir.name, 'bridge.sock')
         self.feedback = FakeFeedback()
         self.ik = FakeIkServer(ik_mode)
         self.trajectory = FakeTrajectoryServer()
+        self.gripper_sink = FakeGripperCommandSink()
         self.bridge = NeroVlaBridge(parameter_overrides=[
             Parameter('socket_path', value=socket_path),
             Parameter('execution_mode', value=mode),
             Parameter('allow_real_motion', value=allow_real_motion),
+            Parameter('allow_gripper_motion', value=allow_gripper_motion),
             Parameter('observation_timeout_sec', value=2.0),
             Parameter('watchdog_timeout_sec', value=5.0),
             Parameter('stop_service_timeout_sec', value=0.01),
@@ -145,9 +170,16 @@ class MotionPipelineTest(unittest.TestCase):
             Parameter('trajectory_server_timeout_sec', value=0.5),
             Parameter('trajectory_result_timeout_sec', value=1.0),
             Parameter('trajectory_duration_sec', value=0.05),
+            Parameter('gripper_feedback_timeout_sec', value=2.0),
         ])
-        self.executor = MultiThreadedExecutor(num_threads=4)
-        for node in (self.feedback, self.ik, self.trajectory, self.bridge):
+        self.executor = MultiThreadedExecutor(num_threads=5)
+        for node in (
+            self.feedback,
+            self.gripper_sink,
+            self.ik,
+            self.trajectory,
+            self.bridge,
+        ):
             self.executor.add_node(node)
         self.spin_thread = threading.Thread(target=self.executor.spin, daemon=True)
         self.spin_thread.start()
@@ -155,7 +187,11 @@ class MotionPipelineTest(unittest.TestCase):
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             status = self.client.request('ping')
-            if status.get('state_ready') and self.bridge._ik_client.service_is_ready():
+            if (
+                status.get('state_ready')
+                and status.get('gripper_feedback_ready')
+                and self.bridge._ik_client.service_is_ready()
+            ):
                 return status
             time.sleep(0.05)
         self.fail('bridge feedback or fake IK service did not become ready')
@@ -167,7 +203,7 @@ class MotionPipelineTest(unittest.TestCase):
             self.bridge.shutdown_bridge()
         if hasattr(self, 'executor'):
             self.executor.shutdown()
-        for name in ('feedback', 'ik', 'trajectory', 'bridge'):
+        for name in ('feedback', 'gripper_sink', 'ik', 'trajectory', 'bridge'):
             node = getattr(self, name, None)
             if node is not None:
                 node.destroy_node()
@@ -185,6 +221,8 @@ class MotionPipelineTest(unittest.TestCase):
         self.assertAlmostEqual(response['action'][0], 0.11, places=6)
         self.assertEqual(self.ik.requests, [])
         self.assertEqual(self.trajectory.goals, [])
+        self.assertFalse(response['gripper_commanded'])
+        self.assertEqual(self.gripper_sink.commands, [])
 
     def test_ik_dry_run_returns_validated_joint_target(self) -> None:
         self._start('ik_dry_run')
@@ -243,6 +281,41 @@ class MotionPipelineTest(unittest.TestCase):
         self.assertTrue(response['ok'])
         self.assertFalse(response['accepted'])
         self.assertIn('exceeds', response['error'])
+
+    def test_enabled_gripper_action_publishes_raw_position(self) -> None:
+        self._start('ik_dry_run', allow_gripper_motion=True)
+        response = self.client.request(
+            'send_action', action=[0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.8])
+        self.assertTrue(response['accepted'])
+        self.assertTrue(response['gripper_commanded'])
+        self.assertEqual(response['gripper_position'], 198)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not self.gripper_sink.commands:
+            time.sleep(0.02)
+        self.assertEqual(self.gripper_sink.commands, [198])
+
+    def test_closed_normalized_gripper_uses_command_limit_990(self) -> None:
+        self._start('ik_dry_run', allow_gripper_motion=True)
+        response = self.client.request(
+            'send_action', action=[0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.0])
+        self.assertTrue(response['accepted'])
+        self.assertTrue(response['gripper_commanded'])
+        self.assertEqual(response['gripper_position'], 990)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not self.gripper_sink.commands:
+            time.sleep(0.02)
+        self.assertEqual(self.gripper_sink.commands, [990])
+
+    def test_ik_failure_does_not_command_gripper(self) -> None:
+        self._start(
+            'ik_dry_run',
+            ik_mode='failure',
+            allow_gripper_motion=True,
+        )
+        response = self.client.request(
+            'send_action', action=[0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.8])
+        self.assertFalse(response['accepted'])
+        self.assertEqual(self.gripper_sink.commands, [])
 
 
 if __name__ == '__main__':

@@ -13,6 +13,30 @@
     <group name="right_arm"/>
   </group>
 
+  <group name="left_gripper">
+    <joint name="left_ctag_left_1_joint"/>
+  </group>
+
+  <group name="right_gripper">
+    <joint name="right_ctag_left_1_joint"/>
+  </group>
+
+  <group name="both_grippers">
+    <group name="left_gripper"/>
+    <group name="right_gripper"/>
+  </group>
+
+  <passive_joint name="left_ctag_left_support_joint"/>
+  <passive_joint name="left_ctag_left_2_joint"/>
+  <passive_joint name="left_ctag_right_2_joint"/>
+  <passive_joint name="left_ctag_right_1_joint"/>
+  <passive_joint name="left_ctag_right_support_joint"/>
+  <passive_joint name="right_ctag_left_support_joint"/>
+  <passive_joint name="right_ctag_left_2_joint"/>
+  <passive_joint name="right_ctag_right_2_joint"/>
+  <passive_joint name="right_ctag_right_1_joint"/>
+  <passive_joint name="right_ctag_right_support_joint"/>
+
   <group_state group="left_arm" name="home">
     <joint name="left_joint1" value="0"/>
     <joint name="left_joint2" value="0"/>
@@ -39,7 +63,7 @@
     <joint name="left_joint1" value="-1.574653504"/>
     <joint name="left_joint2" value="-1.757092771"/>
     <joint name="left_joint3" value="-0.045413467"/>
-    <joint name="left_joint4" value="2.196549224"/>
+    <joint name="left_joint4" value="2.14"/>
     <joint name="left_joint5" value="-0.013561208"/>
     <joint name="left_joint6" value="-0.009267698"/>
     <joint name="left_joint7" value="0.122714100"/>
@@ -49,7 +73,7 @@
     <joint name="right_joint1" value="1.562331480"/>
     <joint name="right_joint2" value="-1.752886528"/>
     <joint name="right_joint3" value="-0.050841441"/>
-    <joint name="right_joint4" value="2.197805861"/>
+    <joint name="right_joint4" value="2.14"/>
     <joint name="right_joint5" value="-0.014311700"/>
     <joint name="right_joint6" value="-0.007627089"/>
     <joint name="right_joint7" value="0.118996548"/>
@@ -59,17 +83,38 @@
     <joint name="left_joint1" value="-1.574653504"/>
     <joint name="left_joint2" value="-1.757092771"/>
     <joint name="left_joint3" value="-0.045413467"/>
-    <joint name="left_joint4" value="2.196549224"/>
+    <joint name="left_joint4" value="2.14"/>
     <joint name="left_joint5" value="-0.013561208"/>
     <joint name="left_joint6" value="-0.009267698"/>
     <joint name="left_joint7" value="0.122714100"/>
     <joint name="right_joint1" value="1.562331480"/>
     <joint name="right_joint2" value="-1.752886528"/>
     <joint name="right_joint3" value="-0.050841441"/>
-    <joint name="right_joint4" value="2.197805861"/>
+    <joint name="right_joint4" value="2.14"/>
     <joint name="right_joint5" value="-0.014311700"/>
     <joint name="right_joint6" value="-0.007627089"/>
     <joint name="right_joint7" value="0.118996548"/>
+  </group_state>
+
+  <group_state group="left_gripper" name="open">
+    <joint name="left_ctag_left_1_joint" value="0"/>
+  </group_state>
+  <group_state group="left_gripper" name="closed">
+    <joint name="left_ctag_left_1_joint" value="-0.90017"/>
+  </group_state>
+  <group_state group="right_gripper" name="open">
+    <joint name="right_ctag_left_1_joint" value="0"/>
+  </group_state>
+  <group_state group="right_gripper" name="closed">
+    <joint name="right_ctag_left_1_joint" value="-0.90017"/>
+  </group_state>
+  <group_state group="both_grippers" name="open">
+    <joint name="left_ctag_left_1_joint" value="0"/>
+    <joint name="right_ctag_left_1_joint" value="0"/>
+  </group_state>
+  <group_state group="both_grippers" name="closed">
+    <joint name="left_ctag_left_1_joint" value="-0.90017"/>
+    <joint name="right_ctag_left_1_joint" value="-0.90017"/>
   </group_state>
 
   <!-- Adjacent-link collision exclusions for the left arm. -->
@@ -82,6 +127,26 @@
   <disable_collisions link1="left_link6" link2="left_link7" reason="Adjacent"/>
   <disable_collisions link1="left_link7" link2="left_tool0" reason="Adjacent"/>
   <disable_collisions link1="left_tool0" link2="left_tcp_link" reason="Adjacent"/>
+  <disable_collisions link1="left_tool0" link2="left_ctag_base_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_base_link" link2="left_ctag_left_1_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_base_link" link2="left_ctag_left_2_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_base_link" link2="left_ctag_right_1_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_base_link" link2="left_ctag_right_2_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_left_1_link" link2="left_ctag_left_support_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_right_1_link" link2="left_ctag_right_support_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_left_support_link" link2="left_ctag_left_2_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_right_support_link" link2="left_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_support_link" link2="left_ctag_right_support_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_support_link" link2="left_ctag_right_1_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_support_link" link2="left_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_1_link" link2="left_ctag_left_2_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_1_link" link2="left_ctag_right_1_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_1_link" link2="left_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_1_link" link2="left_ctag_right_support_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_2_link" link2="left_ctag_right_1_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_2_link" link2="left_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_left_2_link" link2="left_ctag_right_support_link" reason="Never"/>
+  <disable_collisions link1="left_ctag_right_1_link" link2="left_ctag_right_2_link" reason="Never"/>
 
   <!-- Adjacent-link collision exclusions for the right arm. -->
   <disable_collisions link1="right_base_link" link2="right_link1" reason="Adjacent"/>
@@ -93,6 +158,26 @@
   <disable_collisions link1="right_link6" link2="right_link7" reason="Adjacent"/>
   <disable_collisions link1="right_link7" link2="right_tool0" reason="Adjacent"/>
   <disable_collisions link1="right_tool0" link2="right_tcp_link" reason="Adjacent"/>
+  <disable_collisions link1="right_tool0" link2="right_ctag_base_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_base_link" link2="right_ctag_left_1_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_base_link" link2="right_ctag_left_2_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_base_link" link2="right_ctag_right_1_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_base_link" link2="right_ctag_right_2_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_left_1_link" link2="right_ctag_left_support_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_right_1_link" link2="right_ctag_right_support_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_left_support_link" link2="right_ctag_left_2_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_right_support_link" link2="right_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_support_link" link2="right_ctag_right_support_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_support_link" link2="right_ctag_right_1_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_support_link" link2="right_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_1_link" link2="right_ctag_left_2_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_1_link" link2="right_ctag_right_1_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_1_link" link2="right_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_1_link" link2="right_ctag_right_support_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_2_link" link2="right_ctag_right_1_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_2_link" link2="right_ctag_right_2_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_left_2_link" link2="right_ctag_right_support_link" reason="Never"/>
+  <disable_collisions link1="right_ctag_right_1_link" link2="right_ctag_right_2_link" reason="Never"/>
 
   <!-- Mount/table contact is intentional. -->
   <disable_collisions link1="table_slab" link2="left_base_link" reason="Adjacent"/>

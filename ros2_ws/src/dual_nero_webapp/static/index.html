@@ -34,7 +34,7 @@
     <section class="viewport-wrap">
       <div id="viewport"></div>
       <div id="banner" class="banner hidden"></div>
-      <div class="view-hint">drag to orbit · scroll to zoom</div>
+      <div class="view-hint"><span id="pose-mode" class="pose-state waiting">3D: waiting for feedback</span> · drag to orbit · scroll to zoom</div>
     </section>
 
     <aside class="controls">
@@ -56,8 +56,26 @@
           <span class="pill" data-role="gate">gate closed</span>
           <span class="pill" data-role="enabled">motors –</span>
           <span class="pill" data-role="health">arm –</span>
+          <span class="pill" data-role="gripper">grip –</span>
+          <span class="pill" data-role="gripper-motor">grip motor –</span>
         </div>
         <div class="sliders"></div>
+        <div class="gripper-block">
+          <div class="gripper-slider">
+            <label for="left-gripper-position">Grip</label>
+            <input id="left-gripper-position" type="range" min="0" max="990" step="1" value="0" data-role="gripper-position" />
+            <span class="gripper-value" data-role="gripper-value">0</span>
+          </div>
+          <div class="gripper-config">
+            <label>Speed <input type="number" min="1" max="100" step="1" value="25" data-role="gripper-speed" /> %</label>
+          </div>
+          <div class="button-row gripper-buttons">
+            <button class="btn-gripper-apply" disabled>Apply grip</button>
+            <button class="btn-gripper-open" disabled>Open</button>
+            <button class="btn-gripper-close" disabled>Close</button>
+            <button class="btn-gripper-clear-obstruction" disabled title="Stop the gripper, reset a latched alarm, and open the jaws. Confirm the surrounding area is clear.">Clear obstruction</button>
+          </div>
+        </div>
         <div class="button-row primary-row">
           <button class="btn-send" title="Plan and execute with MoveIt collision checking">Send</button>
           <button class="btn-park">Park</button>
@@ -82,8 +100,26 @@
           <span class="pill" data-role="gate">gate closed</span>
           <span class="pill" data-role="enabled">motors –</span>
           <span class="pill" data-role="health">arm –</span>
+          <span class="pill" data-role="gripper">grip –</span>
+          <span class="pill" data-role="gripper-motor">grip motor –</span>
         </div>
         <div class="sliders"></div>
+        <div class="gripper-block">
+          <div class="gripper-slider">
+            <label for="right-gripper-position">Grip</label>
+            <input id="right-gripper-position" type="range" min="0" max="990" step="1" value="0" data-role="gripper-position" />
+            <span class="gripper-value" data-role="gripper-value">0</span>
+          </div>
+          <div class="gripper-config">
+            <label>Speed <input type="number" min="1" max="100" step="1" value="25" data-role="gripper-speed" /> %</label>
+          </div>
+          <div class="button-row gripper-buttons">
+            <button class="btn-gripper-apply" disabled>Apply grip</button>
+            <button class="btn-gripper-open" disabled>Open</button>
+            <button class="btn-gripper-close" disabled>Close</button>
+            <button class="btn-gripper-clear-obstruction" disabled title="Stop the gripper, reset a latched alarm, and open the jaws. Confirm the surrounding area is clear.">Clear obstruction</button>
+          </div>
+        </div>
         <div class="button-row primary-row">
           <button class="btn-send" title="Plan and execute with MoveIt collision checking">Send</button>
           <button class="btn-park">Park</button>

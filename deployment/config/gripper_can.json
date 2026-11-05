@@ -1,0 +1,10 @@
+{
+  "left": {
+    "speed": 25,
+    "max_current": 200
+  },
+  "right": {
+    "speed": 25,
+    "max_current": 200
+  }
+}

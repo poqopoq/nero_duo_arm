@@ -111,6 +111,9 @@ main {
   font-size: 11px;
   pointer-events: none;
 }
+.view-hint .pose-state { color: var(--muted); font-weight: 650; }
+.view-hint .pose-state.live { color: var(--ok); }
+.view-hint .pose-state.preview { color: var(--warn); }
 
 .banner {
   position: absolute;
@@ -207,6 +210,48 @@ main {
 }
 .joint-row .cmd, .joint-row .fb { text-align: right; font-size: 11px; }
 .joint-row .fb { color: var(--muted); }
+
+.gripper-block {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.gripper-slider {
+  display: grid;
+  grid-template-columns: 54px minmax(90px, 1fr) 54px;
+  align-items: center;
+  gap: 7px;
+  font-variant-numeric: tabular-nums;
+}
+.gripper-slider label { color: var(--muted); font-size: 11px; }
+.gripper-slider input[type=range] {
+  width: 100%;
+  min-width: 0;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ok);
+}
+.gripper-value { color: var(--muted); font-size: 11px; text-align: right; }
+.gripper-config {
+  display: flex;
+  gap: 10px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.gripper-config label { display: flex; align-items: center; gap: 3px; }
+.gripper-config input {
+  width: 48px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.gripper-buttons { margin-top: 5px; }
+.gripper-buttons button { flex: 1 1 0; padding: 5px 6px; font-size: 10px; }
 
 .button-row {
   display: flex;

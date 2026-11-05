@@ -11,6 +11,9 @@ const motionStatusEl = document.getElementById('motion-status');
 const bannerEl = document.getElementById('banner');
 const viewport = document.getElementById('viewport');
 const toastEl = document.getElementById('toast');
+const poseModeEl = document.getElementById('pose-mode');
+
+const POSE_PREVIEW_HOLD_MS = 1200;
 
 const app = {
   config: null,
@@ -268,13 +271,167 @@ function updateSafetyUi(side) {
   }
 }
 
+function updateGripperUi(side) {
+  const state = app.sides[side];
+  const panel = document.querySelector(`.panel[data-side="${side}"]`);
+  if (!state || !panel) return;
+  const config = app.config?.gripper || {};
+  const gripper = state.gripper;
+  const slider = panel.querySelector('[data-role="gripper-position"]');
+  const valueEl = panel.querySelector('[data-role="gripper-value"]');
+  const applyButton = panel.querySelector('.btn-gripper-apply');
+  const openButton = panel.querySelector('.btn-gripper-open');
+  const closeButton = panel.querySelector('.btn-gripper-close');
+  const clearObstructionButton = panel.querySelector('.btn-gripper-clear-obstruction');
+  const speedInput = panel.querySelector('[data-role="gripper-speed"]');
+  if (!slider || !valueEl || !applyButton || !openButton || !closeButton
+    || !clearObstructionButton || !speedInput) {
+    return;
+  }
+
+  const positionMin = Number.isFinite(Number(config.position_min))
+    ? Number(config.position_min) : 0;
+  const positionMax = Number.isFinite(Number(config.position_max))
+    ? Number(config.position_max) : 990;
+  slider.min = String(positionMin);
+  slider.max = String(positionMax);
+
+  const fresh = gripper?.feedback_fresh === true;
+  let gripText = 'grip –';
+  let gripTone = '';
+  if (gripper && Number.isFinite(Number(gripper.position))) {
+    const width = Number.isFinite(Number(gripper.width_m))
+      ? ` · ${(Number(gripper.width_m) * 1000).toFixed(1)} mm` : '';
+    const angle = Number.isFinite(Number(gripper.joint_rad))
+      ? ` · ${Number(gripper.joint_rad).toFixed(3)} rad` : '';
+    gripText = `grip ${gripper.position}${width}${angle}`;
+    gripTone = fresh ? 'ok' : 'warn';
+    if (!fresh && Number.isFinite(Number(gripper.feedback_age_sec))) {
+      gripText += ` · stale ${Number(gripper.feedback_age_sec).toFixed(1)}s`;
+    }
+  }
+  setPill(side, 'gripper', gripText, gripTone);
+
+  const motionAllowed = gripper?.motion_allowed === true;
+  const motionActive = gripper?.motion_active === true;
+  const driverStatusFresh = gripper?.driver_status_fresh === true;
+  const driverEnabled = gripper?.driver_enabled === true;
+  const driverState = String(gripper?.driver_state || 'unavailable');
+  let motorText = 'grip motor –';
+  let motorTone = '';
+  if (!motionAllowed) {
+    motorText = 'grip locked';
+    motorTone = 'warn';
+  } else if (!driverStatusFresh) {
+    const age = Number(gripper?.driver_status_age_sec);
+    motorText = Number.isFinite(age) ? `grip status stale ${age.toFixed(1)}s` : 'grip status –';
+    motorTone = 'warn';
+  } else if (driverState === 'fault') {
+    motorText = gripper?.driver_fault_reason
+      ? `grip fault: ${gripper.driver_fault_reason}` : 'grip fault';
+    motorTone = 'bad';
+  } else if (driverState === 'moving') {
+    motorText = 'grip moving';
+    motorTone = 'ok';
+  } else if (driverEnabled) {
+    motorText = 'grip motor on';
+    motorTone = 'ok';
+  } else {
+    motorText = 'grip motor off';
+    motorTone = 'warn';
+  }
+  setPill(side, 'gripper-motor', motorText, motorTone);
+
+  const target = gripper && Number.isFinite(Number(gripper.command_position))
+    ? Number(gripper.command_position)
+    : (gripper && Number.isFinite(Number(gripper.position))
+      ? Number(gripper.position) : state.gripperPosition);
+  if (!state.gripperDragging && !state.gripperTargetEdited
+    && Number.isFinite(target)) {
+    slider.value = String(target);
+    state.gripperPosition = target;
+    valueEl.textContent = String(Math.round(target));
+  }
+  slider.disabled = !motionAllowed || motionActive || Boolean(state.gripperBusy);
+
+  speedInput.min = String(config.speed_percent_min ?? 1);
+  speedInput.max = String(config.speed_percent_max ?? 100);
+  if (driverStatusFresh && Number.isFinite(gripper.motion_speed_percent)
+    && document.activeElement !== speedInput) {
+    speedInput.value = String(gripper.motion_speed_percent);
+  }
+  speedInput.disabled = !motionAllowed || !driverStatusFresh || motionActive
+    || Boolean(state.gripperBusy);
+
+  const autoEnable = gripper?.auto_enable_on_command === true;
+  const canMove = motionAllowed && fresh && driverStatusFresh
+    && (driverEnabled || autoEnable) && driverState !== 'fault' && !motionActive
+    && !state.gripperBusy;
+  applyButton.disabled = !canMove;
+  openButton.disabled = !canMove;
+  closeButton.disabled = !canMove;
+  clearObstructionButton.disabled = !driverStatusFresh || motionActive
+    || Boolean(state.gripperBusy);
+}
+
+function feedbackPoseReady(state) {
+  return state.fb.length > 0
+    && state.fb.every((value) => Number.isFinite(value));
+}
+
+function markCommandPreview(side) {
+  const state = app.sides[side];
+  if (!state) return;
+  state.previewUntil = performance.now() + POSE_PREVIEW_HOLD_MS;
+}
+
+function updatePoseModeHint() {
+  if (!poseModeEl) return;
+  const states = Object.values(app.sides);
+  const now = performance.now();
+  const live = states.filter((state) => feedbackPoseReady(state)
+    && now >= (state.previewUntil || 0)).length;
+  const preview = states.filter((state) => feedbackPoseReady(state)
+    && now < (state.previewUntil || 0)).length;
+  let text = '3D: waiting for feedback';
+  let tone = 'waiting';
+  if (preview > 0) {
+    text = '3D: command preview';
+    tone = 'preview';
+  } else if (live === states.length && states.length > 0) {
+    text = '3D: live feedback';
+    tone = 'live';
+  } else if (live > 0) {
+    text = '3D: partial feedback';
+    tone = 'waiting';
+  }
+  if (poseModeEl.textContent !== text) poseModeEl.textContent = text;
+  poseModeEl.className = `pose-state ${tone}`;
+}
+
+function applyGripperPose(side) {
+  const state = app.sides[side];
+  const joint = app.robot?.joints?.[`${side}_ctag_left_1_joint`];
+  const jointRad = state?.gripper?.joint_rad;
+  if (joint && typeof jointRad === 'number' && Number.isFinite(jointRad)) {
+    joint.setJointValue(jointRad);
+  }
+}
+
 function applyArmPose(side) {
   if (!app.robot || !app.sides[side]) return;
   const state = app.sides[side];
+  const useFeedback = feedbackPoseReady(state)
+    && performance.now() >= (state.previewUntil || 0);
+  const positions = useFeedback ? state.fb : state.cmd;
   for (let index = 0; index < app.jointNames.length; index += 1) {
     const joint = app.robot.joints[`${side}_${app.jointNames[index]}`];
-    if (joint) joint.setJointValue(state.cmd[index]);
+    if (joint && Number.isFinite(positions[index])) {
+      joint.setJointValue(positions[index]);
+    }
   }
+  applyGripperPose(side);
+  updatePoseModeHint();
 }
 
 function setSlider(side, index, value, updatePose = true) {
@@ -300,6 +457,7 @@ function syncSlidersFromFeedback(side, force = false) {
     setSlider(side, index, state.fb[index], false);
   }
   state.poseInitialized = true;
+  state.previewUntil = 0;
   applyArmPose(side);
 }
 
@@ -324,10 +482,8 @@ function buildSliders() {
       const input = row.querySelector('input');
       const command = row.querySelector('.cmd');
       input.addEventListener('input', () => {
-        const value = Number(input.value);
-        state.cmd[index] = value;
-        command.textContent = value.toFixed(3);
-        applyArmPose(side);
+        markCommandPreview(side);
+        setSlider(side, index, input.value);
       });
       container.appendChild(row);
       state.rowEls.push(row);
@@ -347,9 +503,11 @@ function buildSliders() {
         return;
       }
       state.poseInitialized = false;
+      state.previewUntil = 0;
       syncSlidersFromFeedback(side, true);
     });
     panel.querySelector('.btn-zero').addEventListener('click', () => {
+      markCommandPreview(side);
       for (let index = 0; index < app.jointNames.length; index += 1) {
         setSlider(side, index, 0, false);
       }
@@ -360,6 +518,33 @@ function buildSliders() {
     panel.querySelector('.btn-estop').addEventListener('click', () => stopSide(side));
     panel.querySelector('.btn-clear-faults').addEventListener('click', () => clearFaults(side));
     panel.querySelector('.btn-recover').addEventListener('click', () => recoverArm(side));
+
+    const gripperSlider = panel.querySelector('[data-role="gripper-position"]');
+    const gripperValue = panel.querySelector('[data-role="gripper-value"]');
+    gripperSlider.addEventListener('input', () => {
+      state.gripperDragging = true;
+      state.gripperTargetEdited = true;
+      state.gripperPosition = Number(gripperSlider.value);
+      gripperValue.textContent = gripperSlider.value;
+    });
+    gripperSlider.addEventListener('change', () => {
+      state.gripperDragging = false;
+    });
+    panel.querySelector('.btn-gripper-apply').addEventListener('click', () => {
+      moveGripper(side, Number(gripperSlider.value));
+    });
+    panel.querySelector('.btn-gripper-open').addEventListener('click', () => {
+      moveGripper(side, Number(app.config?.gripper?.open_position ?? 0));
+    });
+    panel.querySelector('.btn-gripper-close').addEventListener('click', () => {
+      moveGripper(side, Number(app.config?.gripper?.closed_position ?? 990));
+    });
+    panel.querySelector('.btn-gripper-clear-obstruction').addEventListener('click', () => {
+      clearGripperObstruction(side);
+    });
+    const speedInput = panel.querySelector('[data-role="gripper-speed"]');
+    const applyConfig = () => configureGripper(side, Number(speedInput.value));
+    speedInput.addEventListener('change', applyConfig);
   }
 
   const bothParkAvailable = app.bothSupported
@@ -634,6 +819,97 @@ async function toggleMotors(side) {
     state.enabled ? 'ok' : '');
 }
 
+async function configureGripper(side, speedPercent) {
+  const state = app.sides[side];
+  if (!state || state.gripperBusy) return;
+  if (!Number.isInteger(speedPercent)) {
+    showToast(`${side}: speed must be an integer`, 'error');
+    updateGripperUi(side);
+    return;
+  }
+  state.gripperBusy = true;
+  updateGripperUi(side);
+  let result;
+  try {
+    result = await postJson('/api/gripper', {
+      side,
+      action: 'configure',
+      speed_percent: speedPercent,
+    }, 10000);
+  } catch (error) {
+    result = { ok: false, error: error.message || 'gripper configuration failed' };
+  } finally {
+    state.gripperBusy = false;
+  }
+  updateGripperUi(side);
+  if (!result.ok) {
+    showToast(`${side}: ${result.error || 'gripper configuration failed'}`, 'error');
+    return;
+  }
+  showToast(result.message || `${side}: gripper motion configuration updated`, 'ok');
+}
+
+async function moveGripper(side, position) {
+  const state = app.sides[side];
+  if (!state || state.gripperBusy) return;
+  const target = Number(position);
+  if (!Number.isInteger(target)) {
+    showToast(`${side}: gripper position must be an integer`, 'error');
+    return;
+  }
+  state.gripperBusy = true;
+  updateGripperUi(side);
+  let result;
+  try {
+    result = await postJson('/api/gripper', { side, action: 'position', position: target }, 10000);
+  } catch (error) {
+    result = { ok: false, error: error.message || 'gripper position request failed' };
+  } finally {
+    state.gripperBusy = false;
+  }
+  if (!result.ok) {
+    updateGripperUi(side);
+    showToast(`${side}: ${result.error || 'gripper position request failed'}`, 'error');
+    return;
+  }
+  state.gripperPosition = target;
+  state.gripperTargetEdited = false;
+  if (state.gripper) state.gripper.command_position = target;
+  updateGripperUi(side);
+  showToast(result.message || `${side}: gripper position command sent`, 'ok');
+}
+
+async function clearGripperObstruction(side) {
+  const state = app.sides[side];
+  if (!state || state.gripperBusy) return;
+  const confirmed = window.confirm(
+    `Clear obstruction on the ${side} gripper?\n\n`
+    + 'This stops the current gripper motion, resets the latched hardware '
+    + 'alarm, and commands the jaws to open. Confirm the gripper and its '
+    + 'surroundings are clear before continuing.',
+  );
+  if (!confirmed) return;
+  state.gripperBusy = true;
+  updateGripperUi(side);
+  let result;
+  try {
+    result = await postJson(
+      '/api/gripper', { side, action: 'clear_obstruction' }, 15000);
+  } catch (error) {
+    result = { ok: false, error: error.message || 'gripper obstruction clear failed' };
+  } finally {
+    state.gripperBusy = false;
+  }
+  if (!result.ok) {
+    updateGripperUi(side);
+    showToast(`${side}: ${result.error || 'gripper obstruction clear failed'}`, 'error');
+    return;
+  }
+  state.gripperTargetEdited = false;
+  updateGripperUi(side);
+  showToast(result.message || `${side}: gripper obstruction cleared`, 'ok');
+}
+
 async function clearFaults(side) {
   const state = app.sides[side];
   if (!state || state.healthBusy) return;
@@ -684,7 +960,9 @@ async function recoverArm(side) {
     + 'RE-ENABLE the motors. Enabling applies torque and may move the arm '
     + 'suddenly.\n\n'
     + 'The arm must be physically supported, the gate must be closed, and the '
-    + 'workspace must be clear. This does not send the arm to Park.',
+    + 'workspace must be clear. This does not send the arm to Park.\n\n'
+    + 'This does not recover a gripper fault. Use Clear obstruction on the '
+    + 'gripper panel for a latched jaw alarm.',
   );
   if (!confirmed) return;
 
@@ -766,6 +1044,7 @@ function updateFeedback(side, payload) {
   state.enabled = typeof payload.motor_enabled === 'boolean'
     ? payload.motor_enabled : null;
   state.health = payload.health || null;
+  state.gripper = payload.gripper || null;
 
   const byName = {};
   const names = payload.names || [];
@@ -786,7 +1065,9 @@ function updateFeedback(side, payload) {
     }
   }
   syncSlidersFromFeedback(side);
+  applyArmPose(side);
   updateSafetyUi(side);
+  updateGripperUi(side);
 }
 
 function connectWebSocket() {
@@ -986,6 +1267,7 @@ async function init3d() {
   const urdfLoader = new URDFLoader(loadingManager);
   urdfLoader.packages = {
     agx_arm_description: '/pkg/agx_arm_description',
+    dual_nero_description: '/pkg/dual_nero_description',
   };
   urdfLoader.parseVisual = true;
   urdfLoader.parseCollision = false;
@@ -1061,16 +1343,23 @@ async function boot() {
       enabled: null,
       feedbackAge: null,
       poseInitialized: false,
+      previewUntil: 0,
       motionBusy: false,
       motionAction: null,
       health: null,
       healthBusy: null,
+      gripper: null,
+      gripperPosition: 0,
+      gripperDragging: false,
+      gripperTargetEdited: false,
+      gripperBusy: false,
     };
     updateSafetyUi(side);
   }
 
   updateMotionUi(app.config.motion);
   buildSliders();
+  for (const side of app.config.sides) updateGripperUi(side);
   setupCameras();
   connectWebSocket();
   pollCameraStats();

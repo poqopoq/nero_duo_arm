@@ -11,6 +11,16 @@ def generate_launch_description():
         DeclareLaunchArgument('action_schema', default_value='rot6d20'),
         DeclareLaunchArgument('execution_mode', default_value='dry_run'),
         DeclareLaunchArgument('allow_real_motion', default_value='false'),
+        DeclareLaunchArgument('allow_gripper_motion', default_value='false'),
+        DeclareLaunchArgument(
+            'left_gripper_width_topic', default_value='/left_gripper/width'),
+        DeclareLaunchArgument(
+            'right_gripper_width_topic', default_value='/right_gripper/width'),
+        DeclareLaunchArgument(
+            'left_gripper_command_topic', default_value='/left_gripper/position_cmd'),
+        DeclareLaunchArgument(
+            'right_gripper_command_topic', default_value='/right_gripper/position_cmd'),
+        DeclareLaunchArgument('gripper_max_m', default_value='0.09'),
         DeclareLaunchArgument(
             'camera_scene_topic', default_value='/camera_scene/color/image_raw'),
         DeclareLaunchArgument(
@@ -58,6 +68,17 @@ def generate_launch_description():
                 'action_schema': LaunchConfiguration('action_schema'),
                 'execution_mode': LaunchConfiguration('execution_mode'),
                 'allow_real_motion': LaunchConfiguration('allow_real_motion'),
+                'allow_gripper_motion': LaunchConfiguration(
+                    'allow_gripper_motion'),
+                'left_gripper_width_topic': LaunchConfiguration(
+                    'left_gripper_width_topic'),
+                'right_gripper_width_topic': LaunchConfiguration(
+                    'right_gripper_width_topic'),
+                'left_gripper_command_topic': LaunchConfiguration(
+                    'left_gripper_command_topic'),
+                'right_gripper_command_topic': LaunchConfiguration(
+                    'right_gripper_command_topic'),
+                'gripper_max_m': LaunchConfiguration('gripper_max_m'),
                 'camera_scene_topic': LaunchConfiguration('camera_scene_topic'),
                 'camera_scene_compressed_topic': LaunchConfiguration(
                     'camera_scene_compressed_topic'),

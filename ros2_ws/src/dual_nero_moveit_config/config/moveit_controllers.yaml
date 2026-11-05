@@ -9,6 +9,8 @@ moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControll
 moveit_simple_controller_manager:
   controller_names:
     - dual_arm_controller
+    - left_gripper_controller
+    - right_gripper_controller
 
   dual_arm_controller:
     action_ns: follow_joint_trajectory
@@ -29,3 +31,17 @@ moveit_simple_controller_manager:
       - right_joint5
       - right_joint6
       - right_joint7
+
+  right_gripper_controller:
+    action_ns: gripper_cmd
+    type: GripperCommand
+    default: true
+    joints:
+      - right_ctag_left_1_joint
+
+  left_gripper_controller:
+    action_ns: gripper_cmd
+    type: GripperCommand
+    default: true
+    joints:
+      - left_ctag_left_1_joint

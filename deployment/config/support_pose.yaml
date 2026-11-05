@@ -1,17 +1,18 @@
 # Gravity-stable park pose measured after disabling both motors on native Ubuntu.
-# Validated collision-free in MoveIt with both_arms.
+# J4 uses the deployment cap of 2.14 rad (native limit: 2.146755). The other
+# joints keep the measured gravity-balance values.
 support_pose:
   left_joint1: -1.574653504
   left_joint2: -1.757092771
   left_joint3: -0.045413467
-  left_joint4: 2.196549224
+  left_joint4: 2.14
   left_joint5: -0.013561208
   left_joint6: -0.009267698
   left_joint7: 0.122714100
   right_joint1: 1.562331480
   right_joint2: -1.752886528
   right_joint3: -0.050841441
-  right_joint4: 2.197805861
+  right_joint4: 2.14
   right_joint5: -0.014311700
   right_joint6: -0.007627089
   right_joint7: 0.118996548

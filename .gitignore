@@ -50,6 +50,12 @@ __pycache__/
 calibration_data/
 calibration_results/
 
+# Acceptance artifacts: keep only summarized clean results
+deployment/acceptance/*.log
+deployment/acceptance/*sweep*.csv
+!deployment/acceptance/*_clean.csv
+!deployment/acceptance/gripper_estop_*.csv
+
 # Archives and local environment files
 *.tar.gz
 *.tar.gz.sha256

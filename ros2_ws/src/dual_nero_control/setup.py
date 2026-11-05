@@ -17,11 +17,14 @@ setup(
     zip_safe=True,
     maintainer='robot',
     maintainer_email='todo@example.com',
-    description='Trajectory bridge from MoveIt to the dual NERO drivers.',
+    description='MoveIt bridge and gripper diagnostics for the dual NERO arms.',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
             'trajectory_bridge = dual_nero_control.trajectory_bridge:main',
+            'zqwl_canfd_probe = dual_nero_control.zqwl_canfd_probe:main',
+            'right_gripper_node = dual_nero_control.right_gripper_node:main',
+            'left_gripper_node = dual_nero_control.right_gripper_node:left_main',
         ],
     },
 )

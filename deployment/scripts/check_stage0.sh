@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Read-only stage-0 baseline check. Safe to run on the robot host.
-# Usage: ./scripts/check_stage0.sh | tee docs/00_stage0_auto_snapshot.md
+# Usage: ./scripts/check_stage0.sh
 set -u
 set +e
 

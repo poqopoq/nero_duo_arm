@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 WS="${NERO_DUO_WS:-${ROOT_DIR}/ros2_ws}"
 DEPLOY="${NERO_DUO_DEPLOY:-${ROOT_DIR}/deployment}"
+ROS_PYTHON="${ROS_PYTHON:-/usr/bin/python3}"
 LEFT_LOG=/tmp/nero_left_dual_estop.log
 RIGHT_LOG=/tmp/nero_right_dual_estop.log
 set +u
@@ -59,7 +60,7 @@ if ! grep -q '^/left/agx_arm_ctrl_single_node$' <<<"${NODES}" || \
   exit 2
 fi
 
-python3 "${DEPLOY}/scripts/dual_soft_estop_motion_test.py"
+"${ROS_PYTHON}" "${DEPLOY}/scripts/soft_estop_motion_test.py" --both
 TEST_RC=$?
 echo '--- left driver log ---'
 sed -n '1,220p' "${LEFT_LOG}"

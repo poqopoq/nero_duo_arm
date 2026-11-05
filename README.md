@@ -65,20 +65,15 @@ Start with:
 
 ```text
 deployment/PROJECT_HANDOFF.md
-deployment/docs/00_stage0_system_hardware_baseline.md
-deployment/docs/03_stage2_dual_can_namespace.md
-deployment/docs/04_software_estop_validation.md
-deployment/docs/05_stage3_model_parameters.md
-deployment/docs/06_stage4_realsense_setup.md
-deployment/docs/07_stage5_moveit_plan.md
-deployment/docs/08_stage6_camera_calibration.md
-deployment/docs/10_stage7_umi_lerobot.md
+deployment/docs/00_hardware_baseline.md
+deployment/docs/01_driver_can_safety.md
+deployment/docs/02_sensors_and_calibration.md
+deployment/docs/03_moveit_and_park.md
+deployment/docs/04_umi_lerobot.md
+deployment/docs/05_vla_pipeline.md
 deployment/docs/11_stage8_webapp.md
 deployment/docs/12_usage_and_commands.md
-deployment/docs/13_stage9_vla_smolvla.md
-deployment/docs/14_stage10_vla_motion.md
-deployment/docs/15_stage11_vla_bimanual_eval.md
-deployment/docs/16_umi_nero_e2e.md
+deployment/docs/17_gripper_can_diagnostics.md
 ```
 
 ## Web dashboard
@@ -101,4 +96,4 @@ part of the planning scene. `moveit_dry_run` defaults to `true`, so set
 
 ## Safety
 
-This setup currently uses software emergency stop and a gravity-stable park pose instead of a physical E-stop, as selected by the project owner. Return both arms with `deployment/scripts/reset_to_standard_support.sh`; the script keeps motors enabled by default and only supports power-off with `--disable` after hardware-limit and post-disable stability checks. See `deployment/docs/04_software_estop_validation.md`.
+This setup currently uses software emergency stop and a gravity-stable park pose instead of a physical E-stop, as selected by the project owner. Return both arms with `deployment/scripts/reset_to_standard_support.sh`; the script keeps motors enabled by default and only supports power-off with `--disable` after hardware-limit and post-disable stability checks. See `deployment/docs/01_driver_can_safety.md`.

@@ -17,6 +17,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Float32, Int32
 
 from dual_nero_vla_bridge.bimanual_bridge import (
     ALL_JOINT_NAMES,
@@ -98,6 +99,11 @@ class FakeBimanualFeedback(Node):
                 JointState, f'/{side}/feedback/joint_states', 10)
             for side in ('left', 'right')
         }
+        self.gripper_pubs = {
+            side: self.create_publisher(
+                Float32, f'/{side}_gripper/width', 10)
+            for side in ('left', 'right')
+        }
         self.create_timer(0.05, self._publish)
 
     def _publish(self) -> None:
@@ -118,6 +124,28 @@ class FakeBimanualFeedback(Node):
             joints.position = [0.0] * 7
             self.joint_pubs[side].publish(joints)
 
+            gripper = Float32()
+            gripper.data = 0.09
+            self.gripper_pubs[side].publish(gripper)
+
+
+class FakeGripperCommandSink(Node):
+    def __init__(self) -> None:
+        super().__init__('fake_bimanual_gripper_command_sink')
+        self.commands = {'left': [], 'right': []}
+        self.command_event = threading.Event()
+        for side in ('left', 'right'):
+            self.create_subscription(
+                Int32,
+                f'/{side}_gripper/position_cmd',
+                lambda msg, side=side: self._handle(side, msg),
+                10,
+            )
+
+    def _handle(self, side: str, msg: Int32) -> None:
+        self.commands[side].append(int(msg.data))
+        self.command_event.set()
+
 
 class BridgeClient:
     def __init__(self, socket_path: str) -> None:
@@ -133,11 +161,14 @@ class BridgeClient:
         return recv_frame(self.socket)[0]
 
 
-def _rot6d_action(left_x: float = 0.1, left_gripper: float = 0.8) -> list[float]:
+def _rot6d_action(
+        left_x: float = 0.1,
+        left_gripper: float = 0.8,
+        right_gripper: float = 0.2) -> list[float]:
     identity_rot6d = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
     return [
         left_x, 0.2, 0.3, *identity_rot6d, left_gripper,
-        0.3, 0.2, 0.3, *identity_rot6d, 0.2,
+        0.3, 0.2, 0.3, *identity_rot6d, right_gripper,
     ]
 
 
@@ -155,6 +186,7 @@ class BimanualMotionPipelineTest(unittest.TestCase):
         mode: str,
         failure_side: str | None = None,
         allow_real_motion: bool = False,
+        allow_gripper_motion: bool = False,
         schema: str = 'rot6d20',
     ):
         self.tempdir = tempfile.TemporaryDirectory(
@@ -163,11 +195,13 @@ class BimanualMotionPipelineTest(unittest.TestCase):
         self.feedback = FakeBimanualFeedback()
         self.ik = FakeBimanualIkServer(failure_side)
         self.trajectory = FakeBimanualTrajectoryServer()
+        self.gripper_sink = FakeGripperCommandSink()
         self.bridge = NeroBimanualVlaBridge(parameter_overrides=[
             Parameter('socket_path', value=socket_path),
             Parameter('action_schema', value=schema),
             Parameter('execution_mode', value=mode),
             Parameter('allow_real_motion', value=allow_real_motion),
+            Parameter('allow_gripper_motion', value=allow_gripper_motion),
             Parameter('observation_timeout_sec', value=2.0),
             Parameter('watchdog_timeout_sec', value=5.0),
             Parameter('stop_service_timeout_sec', value=0.01),
@@ -176,9 +210,16 @@ class BimanualMotionPipelineTest(unittest.TestCase):
             Parameter('trajectory_server_timeout_sec', value=0.5),
             Parameter('trajectory_result_timeout_sec', value=1.0),
             Parameter('trajectory_duration_sec', value=0.05),
+            Parameter('gripper_feedback_timeout_sec', value=2.0),
         ])
-        self.executor = MultiThreadedExecutor(num_threads=5)
-        for node in (self.feedback, self.ik, self.trajectory, self.bridge):
+        self.executor = MultiThreadedExecutor(num_threads=6)
+        for node in (
+            self.feedback,
+            self.gripper_sink,
+            self.ik,
+            self.trajectory,
+            self.bridge,
+        ):
             self.executor.add_node(node)
         self.spin_thread = threading.Thread(
             target=self.executor.spin, daemon=True)
@@ -187,7 +228,11 @@ class BimanualMotionPipelineTest(unittest.TestCase):
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             status = self.client.request('ping')
-            if status.get('state_ready') and self.bridge._ik_client.service_is_ready():
+            if (
+                status.get('state_ready')
+                and status.get('gripper_feedback_ready')
+                and self.bridge._ik_client.service_is_ready()
+            ):
                 return status
             time.sleep(0.05)
         self.fail('bimanual bridge feedback or fake IK service did not become ready')
@@ -199,7 +244,7 @@ class BimanualMotionPipelineTest(unittest.TestCase):
             self.bridge.shutdown_bridge()
         if hasattr(self, 'executor'):
             self.executor.shutdown()
-        for name in ('feedback', 'ik', 'trajectory', 'bridge'):
+        for name in ('feedback', 'gripper_sink', 'ik', 'trajectory', 'bridge'):
             node = getattr(self, name, None)
             if node is not None:
                 node.destroy_node()
@@ -218,6 +263,8 @@ class BimanualMotionPipelineTest(unittest.TestCase):
         self.assertAlmostEqual(response['action'][10], 0.3, places=6)
         self.assertEqual(self.ik.requests, [])
         self.assertEqual(self.trajectory.goals, [])
+        self.assertFalse(response['gripper_commanded'])
+        self.assertEqual(self.gripper_sink.commands, {'left': [], 'right': []})
 
     def test_ik_dry_run_solves_each_arm(self) -> None:
         self._start('ik_dry_run')
@@ -277,6 +324,54 @@ class BimanualMotionPipelineTest(unittest.TestCase):
         response = self.client.request('send_action', action=action)
         self.assertTrue(response['accepted'])
         self.assertEqual(response['joint_target'], [0.01] * 14)
+
+    def test_enabled_gripper_actions_publish_raw_positions(self) -> None:
+        self._start('ik_dry_run', allow_gripper_motion=True)
+        response = self.client.request('send_action', action=_rot6d_action())
+        self.assertTrue(response['accepted'])
+        self.assertTrue(response['gripper_commanded'])
+        self.assertEqual(
+            response['gripper_positions'], {'left': 198, 'right': 792})
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if (
+                self.gripper_sink.commands['left']
+                and self.gripper_sink.commands['right']
+            ):
+                break
+            time.sleep(0.02)
+        self.assertEqual(self.gripper_sink.commands['left'], [198])
+        self.assertEqual(self.gripper_sink.commands['right'], [792])
+
+    def test_closed_normalized_grippers_use_command_limit_990(self) -> None:
+        self._start('ik_dry_run', allow_gripper_motion=True)
+        response = self.client.request(
+            'send_action',
+            action=_rot6d_action(left_gripper=0.0, right_gripper=0.0))
+        self.assertTrue(response['accepted'])
+        self.assertTrue(response['gripper_commanded'])
+        self.assertEqual(
+            response['gripper_positions'], {'left': 990, 'right': 990})
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if (
+                self.gripper_sink.commands['left']
+                and self.gripper_sink.commands['right']
+            ):
+                break
+            time.sleep(0.02)
+        self.assertEqual(self.gripper_sink.commands['left'], [990])
+        self.assertEqual(self.gripper_sink.commands['right'], [990])
+
+    def test_ik_failure_does_not_command_grippers(self) -> None:
+        self._start(
+            'ik_dry_run',
+            failure_side='right',
+            allow_gripper_motion=True,
+        )
+        response = self.client.request('send_action', action=_rot6d_action())
+        self.assertFalse(response['accepted'])
+        self.assertEqual(self.gripper_sink.commands, {'left': [], 'right': []})
 
 
 if __name__ == '__main__':

@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from bisect import bisect_right
 from typing import Dict, List, Optional
 
 import rclpy
@@ -37,14 +38,87 @@ def _stamp_to_sec(stamp) -> float:
     return float(stamp.sec) + float(stamp.nanosec) * 1e-9
 
 
+def _build_side_timeline(side, names, points, start):
+    times = []
+    positions = []
+    velocities = []
+    has_velocities = True
+    previous_positions = list(start)
+    previous_velocities = [0.0] * 7
+    if points and _duration_to_sec(points[0].time_from_start) > 1e-9:
+        times.append(0.0)
+        positions.append(previous_positions)
+        velocities.append(previous_velocities)
+    for point in points:
+        side_positions = list(previous_positions)
+        side_velocities = list(previous_velocities)
+        for name, value in zip(names, point.positions):
+            if name in JOINTS[side]:
+                side_positions[JOINTS[side].index(name)] = float(value)
+        if len(point.velocities) == len(names):
+            for name, value in zip(names, point.velocities):
+                if name in JOINTS[side]:
+                    side_velocities[JOINTS[side].index(name)] = float(value)
+        else:
+            has_velocities = False
+        times.append(_duration_to_sec(point.time_from_start))
+        positions.append(side_positions)
+        velocities.append(side_velocities)
+        previous_positions = side_positions
+        previous_velocities = side_velocities
+    return times, positions, velocities, has_velocities
+
+
+def _interpolate_side(timeline, t, cubic):
+    times, positions, velocities, has_velocities = timeline
+    if not times:
+        return [0.0] * 7
+    if t <= times[0]:
+        return list(positions[0])
+    if t >= times[-1]:
+        return list(positions[-1])
+
+    index = min(max(bisect_right(times, t) - 1, 0), len(times) - 2)
+    t0 = times[index]
+    t1 = times[index + 1]
+    if t1 <= t0:
+        return list(positions[index + 1])
+
+    alpha = (t - t0) / (t1 - t0)
+    if not cubic or not has_velocities:
+        return [
+            positions[index][i]
+            + alpha * (positions[index + 1][i] - positions[index][i])
+            for i in range(7)
+        ]
+
+    alpha2 = alpha * alpha
+    alpha3 = alpha2 * alpha
+    h00 = 2.0 * alpha3 - 3.0 * alpha2 + 1.0
+    h10 = alpha3 - 2.0 * alpha2 + alpha
+    h01 = -2.0 * alpha3 + 3.0 * alpha2
+    h11 = alpha3 - alpha2
+    duration = t1 - t0
+    return [
+        h00 * positions[index][i]
+        + h10 * duration * velocities[index][i]
+        + h01 * positions[index + 1][i]
+        + h11 * duration * velocities[index + 1][i]
+        for i in range(7)
+    ]
+
+
 class DualTrajectoryBridge(Node):
     def __init__(self) -> None:
         super().__init__('dual_nero_trajectory_bridge')
 
         self.declare_parameter('dry_run', True)
         self.declare_parameter('command_rate_hz', 50.0)
+        self.declare_parameter('interpolation', 'linear')
         self.declare_parameter('startup_feedback_timeout', 5.0)
         self.declare_parameter('final_hold_sec', 0.5)
+        self.declare_parameter('settle_timeout_sec', 1.0)
+        self.declare_parameter('settle_tolerance_rad', 0.01)
         self.declare_parameter(
             'cancel_service_name', '/dual_nero_trajectory_bridge/cancel_motion')
         self.declare_parameter(
@@ -52,8 +126,17 @@ class DualTrajectoryBridge(Node):
 
         self.dry_run = bool(self.get_parameter('dry_run').value)
         self.rate_hz = float(self.get_parameter('command_rate_hz').value)
+        self.interpolation = str(self.get_parameter('interpolation').value).lower()
+        if self.interpolation not in ('linear', 'cubic'):
+            self.get_logger().warn(
+                f'Unknown interpolation {self.interpolation!r}; using linear')
+            self.interpolation = 'linear'
         self.feedback_timeout = float(self.get_parameter('startup_feedback_timeout').value)
         self.final_hold_sec = float(self.get_parameter('final_hold_sec').value)
+        self.settle_timeout_sec = max(
+            0.0, float(self.get_parameter('settle_timeout_sec').value))
+        self.settle_tolerance_rad = max(
+            0.0, float(self.get_parameter('settle_tolerance_rad').value))
         self._cancel_lock = threading.Lock()
         self._cancel_requested = False
 
@@ -109,7 +192,8 @@ class DualTrajectoryBridge(Node):
         )
         self.create_timer(0.02, self._publish_joint_states)
         self.get_logger().info(
-            f'Trajectory bridge ready; dry_run={self.dry_run}, rate={self.rate_hz} Hz')
+            f'Trajectory bridge ready; dry_run={self.dry_run}, '
+            f'rate={self.rate_hz} Hz, interpolation={self.interpolation}')
 
     def _feedback_cb(self, side: str, msg: JointState) -> None:
         positions = {name: value for name, value in zip(msg.name, msg.position)}
@@ -140,6 +224,22 @@ class DualTrajectoryBridge(Node):
         if self.feedback[side] is not None:
             return list(self.feedback[side])
         return [0.0] * 7
+
+    def _signed_tracking_errors(self, sides, targets) -> Dict[str, List[float]]:
+        errors = {}
+        for side in sides:
+            if self.feedback[side] is not None:
+                errors[side] = [
+                    float(actual) - float(target)
+                    for actual, target in zip(self.feedback[side], targets[side])
+                ]
+        return errors
+
+    def _tracking_errors(self, sides, targets) -> Dict[str, List[float]]:
+        return {
+            side: [abs(error) for error in errors]
+            for side, errors in self._signed_tracking_errors(sides, targets).items()
+        }
 
     def _side_from_joint(self, name: str) -> Optional[str]:
         for side in SIDES:
@@ -268,10 +368,24 @@ class DualTrajectoryBridge(Node):
                 return result
 
         starts = {side: self._current_side(side) for side in involved}
+        timelines = {
+            side: _build_side_timeline(side, names, points, starts[side])
+            for side in involved
+        }
         start_time = time.monotonic()
         end_time = _duration_to_sec(points[-1].time_from_start)
         period = 1.0 / self.rate_hz
+        next_tick = start_time
         last_positions = {side: list(starts[side]) for side in involved}
+        velocity_available = all(
+            timeline[3] for timeline in timelines.values())
+        self.get_logger().info(
+            f'Executing {len(points)} trajectory points in {end_time:.3f}s; '
+            f'interpolation={self.interpolation}, '
+            f'trajectory_velocities={velocity_available}')
+        command_count = 0
+        max_command_gap = 0.0
+        last_command_time = None
 
         try:
             while rclpy.ok():
@@ -297,34 +411,11 @@ class DualTrajectoryBridge(Node):
 
                 elapsed = time.monotonic() - start_time
                 t = min(elapsed, end_time)
-                side_targets = {}
-                for side in involved:
-                    side_targets[side] = list(starts[side])
-
-                # Interpolate every trajectory point into full seven-joint side states.
-                previous_t = 0.0
-                previous_values = {side: list(starts[side]) for side in involved}
-                for point in points:
-                    point_t = _duration_to_sec(point.time_from_start)
-                    values = {side: list(previous_values[side]) for side in involved}
-                    for name, value in zip(names, point.positions):
-                        side = self._side_from_joint(name)
-                        if side in values:
-                            values[side][JOINTS[side].index(name)] = float(value)
-                    if t <= point_t:
-                        alpha = (
-                            0.0 if point_t <= previous_t
-                            else (t - previous_t) / (point_t - previous_t)
-                        )
-                        for side in involved:
-                            side_targets[side] = [
-                                previous_values[side][i]
-                                + alpha * (values[side][i] - previous_values[side][i])
-                                for i in range(7)
-                            ]
-                        break
-                    previous_t = point_t
-                    previous_values = values
+                side_targets = {
+                    side: _interpolate_side(
+                        timelines[side], t, self.interpolation == 'cubic')
+                    for side in involved
+                }
 
                 for side in involved:
                     last_positions[side] = side_targets[side]
@@ -332,6 +423,12 @@ class DualTrajectoryBridge(Node):
                         self.sim_positions[side] = list(side_targets[side])
                     else:
                         self._publish_command(side, side_targets[side])
+                command_time = time.monotonic()
+                if last_command_time is not None:
+                    max_command_gap = max(
+                        max_command_gap, command_time - last_command_time)
+                last_command_time = command_time
+                command_count += 1
 
                 feedback = FollowJointTrajectory.Feedback()
                 feedback.header.stamp = self.get_clock().now().to_msg()
@@ -348,25 +445,132 @@ class DualTrajectoryBridge(Node):
 
                 if elapsed >= end_time:
                     break
-                time.sleep(period)
+                next_tick += period
+                now = time.monotonic()
+                if now < next_tick:
+                    time.sleep(next_tick - now)
+                elif now - next_tick > period:
+                    next_tick = now
 
-            if self.final_hold_sec > 0.0:
-                hold_deadline = time.monotonic() + self.final_hold_sec
-                while rclpy.ok() and time.monotonic() < hold_deadline:
+            hold_start = time.monotonic()
+            hold_deadline = hold_start + self.final_hold_sec
+            settle_deadline = hold_deadline
+            if not self.dry_run:
+                settle_deadline += self.settle_timeout_sec
+            next_hold_tick = hold_start
+            settled = self.dry_run
+            final_error_vectors = {}
+            final_signed_vectors = {}
+            settle_samples = []
+            last_settle_sample = None
+            settle_sample_interval = 0.25
+            if self.final_hold_sec > 0.0 or self.settle_timeout_sec > 0.0:
+                while rclpy.ok() and time.monotonic() < settle_deadline:
                     for side in involved:
                         if self.dry_run:
                             self.sim_positions[side] = list(last_positions[side])
                         else:
                             self._publish_command(side, last_positions[side])
-                    time.sleep(period)
+                    now = time.monotonic()
+                    if not self.dry_run:
+                        final_signed_vectors = self._signed_tracking_errors(
+                            involved, last_positions)
+                        if now >= hold_deadline:
+                            final_error_vectors = {
+                                side: [abs(error) for error in errors]
+                                for side, errors in final_signed_vectors.items()
+                            }
+                            if last_settle_sample is None or (
+                                    now - last_settle_sample
+                                    >= settle_sample_interval - 1e-6):
+                                settle_samples.append((
+                                    now - hold_deadline,
+                                    {
+                                        side: list(errors)
+                                        for side, errors in final_signed_vectors.items()
+                                    },
+                                ))
+                                last_settle_sample = now
+                            if final_error_vectors and max(
+                                    max(errors)
+                                    for errors in final_error_vectors.values()
+                            ) <= self.settle_tolerance_rad:
+                                settled = True
+                                break
+                    next_hold_tick += period
+                    if now < next_hold_tick:
+                        time.sleep(next_hold_tick - now)
+                    elif now - next_hold_tick > period:
+                        next_hold_tick = now
 
+            if not self.dry_run and not final_signed_vectors:
+                final_signed_vectors = self._signed_tracking_errors(
+                    involved, last_positions)
+            if not final_error_vectors:
+                final_error_vectors = {
+                    side: [abs(error) for error in errors]
+                    for side, errors in final_signed_vectors.items()
+                }
+            if final_error_vectors and max(
+                    max(errors) for errors in final_error_vectors.values()
+            ) <= self.settle_tolerance_rad:
+                settled = True
+            final_errors = {
+                side: max(errors)
+                for side, errors in final_error_vectors.items()
+            }
+            worst_joints = {
+                side: errors.index(max(errors)) + 1
+                for side, errors in final_error_vectors.items()
+            }
+            signed_final_errors = {
+                side: final_signed_vectors[side][errors.index(max(errors))]
+                for side, errors in final_error_vectors.items()
+            }
+            worst_targets = {
+                side: last_positions[side][errors.index(max(errors))]
+                for side, errors in final_error_vectors.items()
+            }
+            worst_actuals = {
+                side: self.feedback[side][errors.index(max(errors))]
+                for side, errors in final_error_vectors.items()
+                if self.feedback[side] is not None
+            }
+            settle_traces = {
+                side: [
+                    (round(elapsed, 3), round(errors[side][worst_index], 6))
+                    for elapsed, errors in settle_samples
+                    if side in errors
+                ]
+                for side, worst_index in (
+                    (side, errors.index(max(errors)))
+                    for side, errors in final_error_vectors.items()
+                )
+            }
+            if not self.dry_run and not settled:
+                self.get_logger().warn(
+                    f'Final tracking error did not settle within '
+                    f'{self.settle_timeout_sec:.3f}s; errors={final_errors}, '
+                    f'signed_errors={signed_final_errors}, '
+                    f'worst_joints={worst_joints}, '
+                    f'worst_target_rad={worst_targets}, '
+                    f'worst_actual_rad={worst_actuals}, '
+                    f'settle_trace={settle_traces}')
             if not self.dry_run:
                 for side in involved:
                     self._call_setbool(side, False)
             result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
             goal_handle.succeed()
             self.get_logger().info(
-                f'Trajectory completed in {end_time:.3f}s; dry_run={self.dry_run}')
+                f'Trajectory completed in {end_time:.3f}s; dry_run={self.dry_run}, '
+                f'commands={command_count}, '
+                f'max_command_gap={max_command_gap * 1000.0:.1f}ms, '
+                f'final_error_rad={final_errors}, '
+                f'signed_error_rad={signed_final_errors}, '
+                f'worst_joints={worst_joints}, '
+                f'worst_target_rad={worst_targets}, '
+                f'worst_actual_rad={worst_actuals}, '
+                f'settle_trace={settle_traces}, settled={settled}')
             return result
         except Exception as exc:  # noqa: BLE001
             self.get_logger().error(f'Trajectory execution failed: {exc}')

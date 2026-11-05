@@ -47,5 +47,5 @@ For the 20-D Xense UMI contract and `lerobot-rollout`, use the separate plugin:
 
 The matching ROS node is launched with
 `ros2 launch dual_nero_vla_bridge bimanual_vla_bridge.launch.py`. See
-`deployment/docs/15_stage11_vla_bimanual_eval.md` for the full gate sequence.
+`deployment/docs/05_vla_pipeline.md` for the full gate sequence.
 

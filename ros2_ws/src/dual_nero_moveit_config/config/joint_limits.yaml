@@ -17,3 +17,6 @@ joint_limits:
   right_joint5: {has_velocity_limits: true, max_velocity: 5.0, has_acceleration_limits: true, max_acceleration: 1.0}
   right_joint6: {has_velocity_limits: true, max_velocity: 5.0, has_acceleration_limits: true, max_acceleration: 1.0}
   right_joint7: {has_velocity_limits: true, max_velocity: 5.0, has_acceleration_limits: true, max_acceleration: 1.0}
+
+  left_ctag_left_1_joint: {has_velocity_limits: true, max_velocity: 1.0, has_acceleration_limits: true, max_acceleration: 1.0}
+  right_ctag_left_1_joint: {has_velocity_limits: true, max_velocity: 1.0, has_acceleration_limits: true, max_acceleration: 1.0}

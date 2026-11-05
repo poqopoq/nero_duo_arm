@@ -16,6 +16,10 @@ def generate_launch_description():
         DeclareLaunchArgument('image_key', default_value='camera1'),
         DeclareLaunchArgument('execution_mode', default_value='dry_run'),
         DeclareLaunchArgument('allow_real_motion', default_value='false'),
+        DeclareLaunchArgument('allow_gripper_motion', default_value='false'),
+        DeclareLaunchArgument('gripper_width_topic', default_value=''),
+        DeclareLaunchArgument('gripper_command_topic', default_value=''),
+        DeclareLaunchArgument('gripper_max_m', default_value='0.09'),
         DeclareLaunchArgument('max_translation_step_m', default_value='0.01'),
         DeclareLaunchArgument('max_rotation_step_rad', default_value='0.05'),
         DeclareLaunchArgument('max_joint_step_rad', default_value='0.15'),
@@ -45,6 +49,12 @@ def generate_launch_description():
                 'image_key': LaunchConfiguration('image_key'),
                 'execution_mode': LaunchConfiguration('execution_mode'),
                 'allow_real_motion': LaunchConfiguration('allow_real_motion'),
+                'allow_gripper_motion': LaunchConfiguration(
+                    'allow_gripper_motion'),
+                'gripper_width_topic': LaunchConfiguration('gripper_width_topic'),
+                'gripper_command_topic': LaunchConfiguration(
+                    'gripper_command_topic'),
+                'gripper_max_m': LaunchConfiguration('gripper_max_m'),
                 'max_translation_step_m': LaunchConfiguration('max_translation_step_m'),
                 'max_rotation_step_rad': LaunchConfiguration('max_rotation_step_rad'),
                 'max_joint_step_rad': LaunchConfiguration('max_joint_step_rad'),

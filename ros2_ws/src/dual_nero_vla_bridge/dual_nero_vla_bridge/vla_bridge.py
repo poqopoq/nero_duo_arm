@@ -35,6 +35,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image, JointState
+from std_msgs.msg import Float32, Int32
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -158,14 +159,20 @@ class NeroVlaBridge(Node):
         self.declare_parameter('max_rotation_step_rad', 0.05)
         self.declare_parameter('max_joint_step_rad', 0.15)
         self.declare_parameter('joint_position_min', [
-            -2.70526, -1.760, -2.75, -1.01, -2.75, -0.73, -1.5707963,
+            -2.70526, -1.760, -2.75, -1.01, -2.75, -0.7330383, -1.5707963,
         ])
         self.declare_parameter('joint_position_max', [
-            2.70526, 1.74, 2.75, 2.200, 2.75, 0.95, 1.5707963,
+            2.70526, 1.74, 2.75, 2.14, 2.75, 0.8726646, 1.5707963,
         ])
         self.declare_parameter('workspace_min_xyz', [-2.0, -2.0, -0.2])
         self.declare_parameter('workspace_max_xyz', [2.0, 2.0, 2.0])
-        self.declare_parameter('gripper_max_m', 0.1)
+        self.declare_parameter('gripper_max_m', 0.09)
+        self.declare_parameter('gripper_width_topic', '')
+        self.declare_parameter('gripper_command_topic', '')
+        self.declare_parameter('allow_gripper_motion', False)
+        self.declare_parameter('gripper_position_min', 0)
+        self.declare_parameter('gripper_position_max', 990)
+        self.declare_parameter('gripper_feedback_timeout_sec', 1.0)
         self.declare_parameter('watchdog_timeout_sec', 0.75)
         self.declare_parameter('stop_service_timeout_sec', 0.5)
         self.declare_parameter('ik_service', '/compute_ik')
@@ -221,6 +228,25 @@ class NeroVlaBridge(Node):
         if any(low >= high for low, high in zip(self.workspace_min, self.workspace_max)):
             raise ValueError('workspace_min_xyz must be strictly below workspace_max_xyz')
         self.gripper_max_m = max(1e-6, float(self.get_parameter('gripper_max_m').value))
+        self.gripper_width_topic = (
+            str(self.get_parameter('gripper_width_topic').value)
+            or f'/{self.side}_gripper/width'
+        )
+        self.gripper_command_topic = (
+            str(self.get_parameter('gripper_command_topic').value)
+            or f'/{self.side}_gripper/position_cmd'
+        )
+        self.allow_gripper_motion = bool(
+            self.get_parameter('allow_gripper_motion').value)
+        self.gripper_position_min = int(
+            self.get_parameter('gripper_position_min').value)
+        self.gripper_position_max = int(
+            self.get_parameter('gripper_position_max').value)
+        if self.gripper_position_max <= self.gripper_position_min:
+            raise ValueError(
+                'gripper_position_max must be greater than gripper_position_min')
+        self.gripper_feedback_timeout = max(
+            0.1, float(self.get_parameter('gripper_feedback_timeout_sec').value))
         self.watchdog_timeout = float(self.get_parameter('watchdog_timeout_sec').value)
         self.stop_service_timeout = float(self.get_parameter('stop_service_timeout_sec').value)
         self.ik_group_name = (
@@ -253,6 +279,7 @@ class NeroVlaBridge(Node):
         self._tcp_stamp = 0.0
         self._joints: Optional[list[float]] = None
         self._gripper_width_m: Optional[float] = None
+        self._gripper_mono = 0.0
         self._joint_mono = 0.0
         self._joint_stamp = 0.0
         self._image_jpeg: Optional[bytes] = None
@@ -288,6 +315,10 @@ class NeroVlaBridge(Node):
         )
         self.create_subscription(PoseStamped, self.tcp_topic, self._tcp_cb, topic_qos)
         self.create_subscription(JointState, self.joint_state_topic, self._joint_cb, topic_qos)
+        self.create_subscription(
+            Float32, self.gripper_width_topic, self._gripper_width_cb, topic_qos)
+        self._gripper_command_publisher = self.create_publisher(
+            Int32, self.gripper_command_topic, topic_qos)
         if self.use_compressed_image:
             self.create_subscription(
                 CompressedImage,
@@ -301,6 +332,10 @@ class NeroVlaBridge(Node):
 
         self._stop_clients = {
             self.side: self.create_client(Empty, f'/{self.side}/emergency_stop'),
+        }
+        self._gripper_stop_clients = {
+            self.side: self.create_client(
+                Empty, f'/{self.side}_gripper/emergency_stop'),
         }
         self._gate_clients = {
             self.side: self.create_client(SetBool, f'/{self.side}/control_enable'),
@@ -367,6 +402,68 @@ class NeroVlaBridge(Node):
                 self._gripper_width_m = float(gripper)
             self._joint_mono = time.monotonic()
             self._joint_stamp = self._stamp_to_sec(msg.header.stamp)
+
+    def _gripper_width_cb(self, msg: Float32) -> None:
+        width = float(msg.data)
+        if not math.isfinite(width) or width < 0.0:
+            self.get_logger().warn(
+                f'Rejected invalid gripper width: {width}',
+                throttle_duration_sec=5.0,
+            )
+            return
+        with self._lock:
+            self._gripper_width_m = width
+            self._gripper_mono = time.monotonic()
+
+    def _gripper_feedback_ready(self) -> bool:
+        with self._lock:
+            return (
+                self._gripper_width_m is not None
+                and self._gripper_mono > 0.0
+                and time.monotonic() - self._gripper_mono
+                <= self.gripper_feedback_timeout
+            )
+
+    def _send_gripper_command(self, applied: list[float]) -> dict:
+        if not self.allow_gripper_motion:
+            return {
+                'gripper_commanded': False,
+                'gripper_position': None,
+                'gripper_error': 'gripper motion disabled in VLA bridge',
+            }
+        if self.execution_mode == 'dry_run':
+            return {
+                'gripper_commanded': False,
+                'gripper_position': None,
+                'gripper_error': None,
+            }
+        with self._lock:
+            width = self._gripper_width_m
+            age = (
+                time.monotonic() - self._gripper_mono
+                if self._gripper_mono > 0.0 else None
+            )
+        if width is None or age is None or age > self.gripper_feedback_timeout:
+            detail = 'missing' if age is None else f'{age:.2f}s old'
+            return {
+                'gripper_commanded': False,
+                'gripper_position': None,
+                'gripper_error': f'gripper feedback not fresh: {detail}',
+            }
+        normalized = max(0.0, min(1.0, float(applied[6])))
+        span = self.gripper_position_max - self.gripper_position_min
+        position = int(round(
+            self.gripper_position_min + (1.0 - normalized) * span))
+        message = Int32()
+        message.data = position
+        self._gripper_command_publisher.publish(message)
+        self.get_logger().info(
+            f'VLA gripper position sent: {position}', throttle_duration_sec=1.0)
+        return {
+            'gripper_commanded': True,
+            'gripper_position': position,
+            'gripper_error': None,
+        }
 
     def _image_cb(self, msg: Image) -> None:
         if msg.encoding not in ('rgb8', 'bgr8', 'yuv422_yuy2', 'yuyv', 'yuv422'):
@@ -745,6 +842,10 @@ class NeroVlaBridge(Node):
             request = SetBool.Request()
             request.data = False
             client.call_async(request)
+        for side, client in self._gripper_stop_clients.items():
+            if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
+                continue
+            client.call_async(Empty.Request())
 
     def _dispatch(self, request: dict[str, Any]) -> tuple[dict[str, Any], bytes]:
         command = request.get('cmd')
@@ -764,6 +865,10 @@ class NeroVlaBridge(Node):
                 'trajectory_ready': trajectory_ready,
                 'motion_fault': self._motion_fault_reason,
                 'trajectory': self._trajectory_snapshot(),
+                'allow_gripper_motion': self.allow_gripper_motion,
+                'gripper_feedback_ready': self._gripper_feedback_ready(),
+                'gripper_width_topic': self.gripper_width_topic,
+                'gripper_command_topic': self.gripper_command_topic,
                 'state_ready': status is not None,
                 'state_error': error,
             }, b''
@@ -809,6 +914,9 @@ class NeroVlaBridge(Node):
                     'clamped': clamped,
                     'executed': False,
                     'mode': self.execution_mode,
+                    'gripper_commanded': False,
+                    'gripper_position': None,
+                    'gripper_error': None,
                 }, b''
             if self.execution_mode == 'trajectory' and self._motion_fault_reason is not None:
                 return {
@@ -839,7 +947,7 @@ class NeroVlaBridge(Node):
                 throttle_duration_sec=1.0,
             )
             if self.execution_mode == 'ik_dry_run':
-                return {
+                result = {
                     'ok': True,
                     'action': applied,
                     'accepted': True,
@@ -848,10 +956,12 @@ class NeroVlaBridge(Node):
                     'mode': self.execution_mode,
                     'joint_target': joint_target,
                     'ik_error_code': MoveItErrorCodes.SUCCESS,
-                }, b''
+                }
+                result.update(self._send_gripper_command(applied))
+                return result, b''
 
             sequence = self._queue_joint_target(joint_target)
-            return {
+            result = {
                 'ok': True,
                 'action': applied,
                 'accepted': True,
@@ -861,8 +971,9 @@ class NeroVlaBridge(Node):
                 'mode': self.execution_mode,
                 'joint_target': joint_target,
                 'trajectory_sequence': sequence,
-                'gripper_commanded': False,
-            }, b''
+            }
+            result.update(self._send_gripper_command(applied))
+            return result, b''
         if command == 'stop':
             if self.execution_mode == 'trajectory':
                 self._abort_motion('stop command received')
