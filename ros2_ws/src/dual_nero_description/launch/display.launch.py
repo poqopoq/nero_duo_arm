@@ -43,7 +43,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('table_width', default_value='1.80'),
         DeclareLaunchArgument('table_depth', default_value='0.90'),
-        DeclareLaunchArgument('base_spacing', default_value='0.70'),
+        DeclareLaunchArgument('base_spacing', default_value='0.60'),
         DeclareLaunchArgument('front_edge_offset', default_value='0.06'),
         DeclareLaunchArgument('left_base_yaw', default_value='3.141592653589793'),
         DeclareLaunchArgument('right_base_yaw', default_value='3.141592653589793'),

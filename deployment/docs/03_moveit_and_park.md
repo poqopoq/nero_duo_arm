@@ -19,6 +19,10 @@
 
 ## 2. 启动规划
 
+MoveIt 默认给机器人、场景物体和附着物体统一增加 `0.025 m`（25 mm）
+碰撞包络，用于吸收基座位置、桌面高度和连杆尺寸的现场测量误差。该包络在
+规划阶段生效，不等同于真实障碍物检测。
+
 ```bash
 cd /home/work/nero_duo_arm/ros2_ws
 source /opt/ros/humble/setup.bash
@@ -31,6 +35,20 @@ ros2 launch dual_nero_moveit_config moveit_planning.launch.py
 ```bash
 ros2 launch dual_nero_moveit_config moveit_planning.launch.py \
   gui:=false rviz:=false
+```
+
+现场复测误差较大时可临时增大包络；这会降低可达空间，必须重新验证目标位姿：
+
+```bash
+ros2 launch dual_nero_moveit_config moveit_planning.launch.py \
+  collision_padding:=0.03
+```
+
+执行入口和 Web app 使用同名参数。例如：
+
+```bash
+ros2 launch dual_nero_moveit_config moveit_execution.launch.py \
+  dry_run:=true collision_padding:=0.03
 ```
 
 RViz 手动规划：
@@ -136,5 +154,7 @@ ros2 launch dual_nero_moveit_config moveit_execution.launch.py \
 
 - NERO 驱动没有标准 `FollowJointTrajectory` action，必须经轨迹桥。
 - 碰撞检查只覆盖 URDF、桌面和静态 planning scene；未接入相机点云/OctoMap。
+- `collision_padding` 只能覆盖有界建模误差；未建模的动态障碍、工装变形和
+  超过包络的安装偏差仍可能导致真机碰撞，不能替代现场急停和工作区隔离。
 - 短轨迹是 latest-wins 的绝对关节目标，不是高频连续伺服。
 - 夹爪 `GripperCommand` 默认 `allow_motion=false`，真机夹爪步骤见夹爪文档。

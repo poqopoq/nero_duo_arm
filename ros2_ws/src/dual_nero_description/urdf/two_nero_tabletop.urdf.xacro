@@ -8,7 +8,7 @@
   <xacro:arg name="table_width" default="1.80"/>
   <xacro:arg name="table_depth" default="0.90"/>
   <xacro:arg name="table_thickness" default="0.03"/>
-  <xacro:arg name="base_spacing" default="0.70"/>
+  <xacro:arg name="base_spacing" default="0.60"/>
   <xacro:arg name="front_edge_offset" default="0.06"/>
   <xacro:arg name="left_base_yaw" default="3.141592653589793"/>
   <xacro:arg name="right_base_yaw" default="3.141592653589793"/>

@@ -56,9 +56,9 @@ ros2 topic hz /camera_right_wrist/color/image_raw
 ```text
 world: 桌面平面、左右基座中心中点；+X 指向桌内，+Y 指向左，+Z 向上
 table front edge: world.x = -0.06 m
-left base:  xyz = [0, +0.35, 0], yaw = pi
-right base: xyz = [0, -0.35, 0], yaw = pi
-基座中心距: 0.70 m
+left base:  xyz = [0, +0.30, 0], yaw = pi
+right base: xyz = [0, -0.30, 0], yaw = pi
+基座中心距: 0.60 m
 TCP: tool0 沿工具轴 +0.1708 m，到 CTAG2F90D 两指夹持中心
 ```
 

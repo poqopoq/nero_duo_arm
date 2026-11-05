@@ -12,6 +12,7 @@ from moveit_configs_utils import MoveItConfigsBuilder
 
 def generate_launch_description():
     use_rviz = LaunchConfiguration('rviz')
+    collision_padding = LaunchConfiguration('collision_padding')
     dry_run = LaunchConfiguration('dry_run')
     command_rate_hz = LaunchConfiguration('command_rate_hz')
     trajectory_interpolation = LaunchConfiguration('trajectory_interpolation')
@@ -55,6 +56,14 @@ def generate_launch_description():
         .to_moveit_configs()
     )
 
+    moveit_params = moveit_config.to_dict()
+    moveit_params['robot_description_planning.default_robot_padding'] = (
+        ParameterValue(collision_padding, value_type=float))
+    moveit_params['robot_description_planning.default_object_padding'] = (
+        ParameterValue(collision_padding, value_type=float))
+    moveit_params['robot_description_planning.default_attached_padding'] = (
+        ParameterValue(collision_padding, value_type=float))
+
     bridge = Node(
         package='dual_nero_control',
         executable='trajectory_bridge',
@@ -85,7 +94,7 @@ def generate_launch_description():
                 package='moveit_ros_move_group',
                 executable='move_group',
                 output='screen',
-                parameters=[moveit_config.to_dict()],
+                parameters=[moveit_params],
             )
         ],
     )
@@ -181,6 +190,10 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('dry_run', default_value='true'),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument(
+            'collision_padding', default_value='0.025',
+            description='Extra collision clearance added around robot and scene '
+                        'geometry in meters.'),
         DeclareLaunchArgument('command_rate_hz', default_value='50.0'),
         DeclareLaunchArgument('trajectory_interpolation', default_value='linear'),
         DeclareLaunchArgument('settle_timeout_sec', default_value='1.0'),

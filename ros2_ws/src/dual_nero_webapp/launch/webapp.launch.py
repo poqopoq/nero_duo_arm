@@ -29,6 +29,7 @@ def generate_launch_description():
     moveit_velocity_scaling = LaunchConfiguration('moveit_velocity_scaling')
     moveit_acceleration_scaling = LaunchConfiguration(
         'moveit_acceleration_scaling')
+    collision_padding = LaunchConfiguration('collision_padding')
     trajectory_command_rate_hz = LaunchConfiguration(
         'trajectory_command_rate_hz')
     trajectory_interpolation = LaunchConfiguration('trajectory_interpolation')
@@ -149,6 +150,7 @@ def generate_launch_description():
         launch_arguments={
             'dry_run': moveit_dry_run,
             'rviz': moveit_rviz,
+            'collision_padding': collision_padding,
             'command_rate_hz': trajectory_command_rate_hz,
             'trajectory_interpolation': trajectory_interpolation,
             'settle_timeout_sec': trajectory_settle_timeout_sec,
@@ -257,6 +259,9 @@ def generate_launch_description():
             'moveit_acceleration_scaling', default_value='0.05',
             description='MoveIt maximum joint acceleration scaling factor.'),
         DeclareLaunchArgument(
+            'collision_padding', default_value='0.025',
+            description='Extra MoveIt collision clearance in meters.'),
+        DeclareLaunchArgument(
             'trajectory_command_rate_hz', default_value='50.0',
             description='Trajectory bridge command publishing rate in Hz.'),
         DeclareLaunchArgument(
@@ -317,7 +322,7 @@ def generate_launch_description():
         DeclareLaunchArgument('table_width', default_value='1.80'),
         DeclareLaunchArgument('table_depth', default_value='0.90'),
         DeclareLaunchArgument('table_thickness', default_value='0.03'),
-        DeclareLaunchArgument('base_spacing', default_value='0.70'),
+        DeclareLaunchArgument('base_spacing', default_value='0.60'),
         DeclareLaunchArgument('front_edge_offset', default_value='0.06'),
         DeclareLaunchArgument('left_base_yaw', default_value='3.141592653589793'),
         DeclareLaunchArgument('right_base_yaw', default_value='3.141592653589793'),

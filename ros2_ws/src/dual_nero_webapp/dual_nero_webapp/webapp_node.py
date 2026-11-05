@@ -236,7 +236,7 @@ class WebappNode(Node):
         self.declare_parameter('table_width', 1.80)
         self.declare_parameter('table_depth', 0.90)
         self.declare_parameter('table_thickness', 0.03)
-        self.declare_parameter('base_spacing', 0.70)
+        self.declare_parameter('base_spacing', 0.60)
         self.declare_parameter('front_edge_offset', 0.06)
         self.declare_parameter('left_base_yaw', 3.141592653589793)
         self.declare_parameter('right_base_yaw', 3.141592653589793)

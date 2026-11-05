@@ -6,12 +6,14 @@ from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
 
 def generate_launch_description():
     use_gui = LaunchConfiguration('gui')
     use_rviz = LaunchConfiguration('rviz')
+    collision_padding = LaunchConfiguration('collision_padding')
 
     description_share = get_package_share_directory('dual_nero_description')
     xacro_path = os.path.join(description_share, 'urdf',
@@ -29,6 +31,12 @@ def generate_launch_description():
     )
 
     moveit_params = moveit_config.to_dict()
+    moveit_params['robot_description_planning.default_robot_padding'] = (
+        ParameterValue(collision_padding, value_type=float))
+    moveit_params['robot_description_planning.default_object_padding'] = (
+        ParameterValue(collision_padding, value_type=float))
+    moveit_params['robot_description_planning.default_attached_padding'] = (
+        ParameterValue(collision_padding, value_type=float))
     for key in ('moveit_controller_manager', 'moveit_simple_controller_manager',
                 'trajectory_execution'):
         moveit_params.pop(key, None)
@@ -87,6 +95,10 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('gui', default_value='true'),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument(
+            'collision_padding', default_value='0.025',
+            description='Extra collision clearance added around robot and scene '
+                        'geometry in meters.'),
         robot_state_publisher,
         joint_state_publisher,
         joint_state_publisher_gui,
