@@ -12,6 +12,10 @@ class NeroConfig(RobotConfig):
 
     The LeRobot process never imports ``rclpy``. It talks to
     ``dual_nero_vla_bridge`` over a local Unix socket instead.
+
+    The feature contract is ``ee.x.pos ... ee.gripper.pos``. Datasets and
+    checkpoints created with the older ``ee.x ... ee.gripper`` names must be
+    re-exported or renamed before remote rollout.
     """
 
     bridge_socket: str = '/tmp/nero_vla_bridge.sock'

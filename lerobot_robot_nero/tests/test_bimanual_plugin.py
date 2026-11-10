@@ -8,11 +8,9 @@ import unittest
 
 import cv2
 import numpy as np
-import torch
 
-from lerobot.async_inference.configs import RobotClientConfig
-from lerobot.async_inference.robot_client import RobotClient
 from lerobot.robots import RobotConfig, make_robot_from_config
+from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot_robot_nero import NeroBimanual, NeroBimanualConfig
 from lerobot_robot_nero.bimanual import state_names
@@ -123,8 +121,10 @@ class NeroBimanualPluginTest(unittest.TestCase):
             right_wrist_image_width=64,
             right_wrist_image_height=48,
         ))
+        self.assertTrue(robot.supports_position_hold)
         self.assertEqual(tuple(robot.action_features), state_names('rot6d20'))
         self.assertEqual(len(robot.action_features), 20)
+        self.assertTrue(all(name.endswith('.pos') for name in robot.action_features))
         self.assertEqual(
             tuple(robot.observation_features),
             (*state_names('rot6d20'), 'side', 'left_wrist', 'right_wrist'),
@@ -161,35 +161,29 @@ class NeroBimanualPluginTest(unittest.TestCase):
             self.assertAlmostEqual(applied['right_gripper.pos'], 0.25)
             robot.disconnect()
 
-    def test_robot_client_feature_mapping(self) -> None:
+    def test_position_hold_contract(self) -> None:
         with MockBimanualBridge() as bridge:
-            client = RobotClient(
-                RobotClientConfig(
-                    robot=NeroBimanualConfig(
-                        bridge_socket=bridge.socket_path,
-                        scene_image_width=64,
-                        scene_image_height=48,
-                        left_wrist_image_width=64,
-                        left_wrist_image_height=48,
-                        right_wrist_image_width=64,
-                        right_wrist_image_height=48,
-                        stop_on_disconnect=False,
-                    ),
-                    policy_type='smolvla',
-                    pretrained_name_or_path='test/checkpoint',
-                    actions_per_chunk=10,
-                )
-            )
-            features = client.policy_config.lerobot_features
-            self.assertEqual(features['observation.state']['shape'], (20,))
-            self.assertEqual(features['observation.images.side']['shape'], (48, 64, 3))
-            self.assertEqual(
-                features['observation.images.left_wrist']['shape'], (48, 64, 3))
-            action = client._action_tensor_to_action_dict(
-                torch.arange(20, dtype=torch.float32))
-            self.assertEqual(len(action), 20)
-            self.assertEqual(list(action.values()), [float(i) for i in range(20)])
-            client.robot.disconnect()
+            robot = make_robot_from_config(NeroBimanualConfig(
+                bridge_socket=bridge.socket_path,
+                scene_image_width=64,
+                scene_image_height=48,
+                left_wrist_image_width=64,
+                left_wrist_image_height=48,
+                right_wrist_image_width=64,
+                right_wrist_image_height=48,
+                stop_on_disconnect=False,
+            ))
+            wrapper = ThreadSafeRobot(robot)
+            wrapper.configure_position_hold()
+            self.assertTrue(wrapper.supports_hold)
+            robot.connect()
+            observation = wrapper.get_observation()
+            action = {name: observation[name] for name in wrapper.action_features}
+            action['left_tcp.x.pos'] += 0.01
+            applied = wrapper.send_action(action)
+            self.assertAlmostEqual(applied['left_tcp.x.pos'], 0.11)
+            wrapper.hold()
+            robot.disconnect()
 
     def test_rejected_action_aborts_rollout(self) -> None:
         with MockBimanualBridge() as bridge:

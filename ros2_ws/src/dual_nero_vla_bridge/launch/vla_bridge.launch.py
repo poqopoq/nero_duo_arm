@@ -16,6 +16,10 @@ def generate_launch_description():
         DeclareLaunchArgument('image_key', default_value='camera1'),
         DeclareLaunchArgument('execution_mode', default_value='dry_run'),
         DeclareLaunchArgument('allow_real_motion', default_value='false'),
+        DeclareLaunchArgument('control_command_topic', default_value=''),
+        DeclareLaunchArgument('stream_command_rate_hz', default_value='50.0'),
+        DeclareLaunchArgument('stream_feedback_timeout_sec', default_value='0.75'),
+        DeclareLaunchArgument('gripper_enabled', default_value='false'),
         DeclareLaunchArgument('allow_gripper_motion', default_value='false'),
         DeclareLaunchArgument('gripper_width_topic', default_value=''),
         DeclareLaunchArgument('gripper_command_topic', default_value=''),
@@ -49,6 +53,13 @@ def generate_launch_description():
                 'image_key': LaunchConfiguration('image_key'),
                 'execution_mode': LaunchConfiguration('execution_mode'),
                 'allow_real_motion': LaunchConfiguration('allow_real_motion'),
+                'control_command_topic': LaunchConfiguration(
+                    'control_command_topic'),
+                'stream_command_rate_hz': LaunchConfiguration(
+                    'stream_command_rate_hz'),
+                'stream_feedback_timeout_sec': LaunchConfiguration(
+                    'stream_feedback_timeout_sec'),
+                'gripper_enabled': LaunchConfiguration('gripper_enabled'),
                 'allow_gripper_motion': LaunchConfiguration(
                     'allow_gripper_motion'),
                 'gripper_width_topic': LaunchConfiguration('gripper_width_topic'),

@@ -1,13 +1,17 @@
 # lerobot_robot_nero
 
-LeRobot 0.6.x robot plugin for the NERO arm.
+LeRobot 0.6.2 robot plugin for the NERO arm.
 
 It exposes a 7-D absolute end-effector state/action contract through a local
 Unix socket served by the ROS 2 Humble package `dual_nero_vla_bridge`:
 
 ```text
-[x, y, z, rx, ry, rz, gripper]
+[ee.x.pos, ee.y.pos, ee.z.pos, ee.rx.pos, ee.ry.pos, ee.rz.pos,
+ ee.gripper.pos]
 ```
+
+All action features end in `.pos` and both NERO robot classes declare
+`supports_position_hold=True`, as required by LeRobot 0.6.2 remote rollout.
 
 The plugin does not import `rclpy`. It can run in the Python 3.12 LeRobot
 environment while ROS 2 remains in its own Python 3.10 process.
@@ -31,6 +35,11 @@ the plugin package or its `pyproject.toml`.
 Start `dual_nero_vla_bridge` in the ROS environment first, then pass
 `--robot.type=nero_ros` to LeRobot tools. The bridge socket defaults to
 `/tmp/nero_vla_bridge.sock`.
+
+Pass `--return_to_initial_position=false` to `lerobot-rollout`. The 7-D action
+contains an axis-angle rotation, so LeRobot's default linear return path could
+interpolate through an invalid orientation. The plugin's `disconnect()` sends
+the bridge stop request instead.
 
 ## Bimanual rollout
 

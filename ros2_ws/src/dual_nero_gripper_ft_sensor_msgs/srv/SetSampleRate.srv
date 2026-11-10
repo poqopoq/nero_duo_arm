@@ -1,0 +1,4 @@
+uint32 sample_rate_hz
+---
+bool success
+string message

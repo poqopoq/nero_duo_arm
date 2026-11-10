@@ -11,6 +11,15 @@ def generate_launch_description():
         DeclareLaunchArgument('action_schema', default_value='rot6d20'),
         DeclareLaunchArgument('execution_mode', default_value='dry_run'),
         DeclareLaunchArgument('allow_real_motion', default_value='false'),
+        DeclareLaunchArgument(
+            'left_control_command_topic',
+            default_value='/left/control/joint_states'),
+        DeclareLaunchArgument(
+            'right_control_command_topic',
+            default_value='/right/control/joint_states'),
+        DeclareLaunchArgument('stream_command_rate_hz', default_value='50.0'),
+        DeclareLaunchArgument('stream_feedback_timeout_sec', default_value='0.75'),
+        DeclareLaunchArgument('gripper_enabled', default_value='false'),
         DeclareLaunchArgument('allow_gripper_motion', default_value='false'),
         DeclareLaunchArgument(
             'left_gripper_width_topic', default_value='/left_gripper/width'),
@@ -68,6 +77,15 @@ def generate_launch_description():
                 'action_schema': LaunchConfiguration('action_schema'),
                 'execution_mode': LaunchConfiguration('execution_mode'),
                 'allow_real_motion': LaunchConfiguration('allow_real_motion'),
+                'left_control_command_topic': LaunchConfiguration(
+                    'left_control_command_topic'),
+                'right_control_command_topic': LaunchConfiguration(
+                    'right_control_command_topic'),
+                'stream_command_rate_hz': LaunchConfiguration(
+                    'stream_command_rate_hz'),
+                'stream_feedback_timeout_sec': LaunchConfiguration(
+                    'stream_feedback_timeout_sec'),
+                'gripper_enabled': LaunchConfiguration('gripper_enabled'),
                 'allow_gripper_motion': LaunchConfiguration(
                     'allow_gripper_motion'),
                 'left_gripper_width_topic': LaunchConfiguration(

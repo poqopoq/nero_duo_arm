@@ -21,7 +21,7 @@ set -u
 sudo apt-get update
 sudo apt-get install -y \
   can-utils ethtool v4l-utils \
-  python3-pip python3-scipy python3-opencv python3-yaml \
+  python3-pip python3-scipy python3-opencv python3-yaml python3-serial \
   python3-fastapi python3-uvicorn python3-wsproto \
   python3-colcon-common-extensions \
   ros-humble-xacro \

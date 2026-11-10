@@ -356,8 +356,8 @@ def test_cli_hdf5_dry_run_nero_contract(tmp_path: Path, capsys) -> None:
     assert "-> observation.images.camera1" in output
     assert '"observation.images.camera1"' in output
     assert '"observation.state"' in output
-    assert "ee.rx" in output
-    assert "ee.gripper" in output
+    assert "ee.rx.pos" in output
+    assert "ee.gripper.pos" in output
 
 
 def test_convert_hdf5_with_nero_contract(tmp_path: Path) -> None:

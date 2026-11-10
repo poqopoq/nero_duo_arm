@@ -19,6 +19,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Int32
+from std_srvs.srv import SetBool
 
 from dual_nero_vla_bridge.protocol import recv_frame, send_frame
 from dual_nero_vla_bridge.vla_bridge import NeroVlaBridge
@@ -38,9 +39,14 @@ class FakeIkServer(Node):
             return response
         seed = list(request.ik_request.robot_state.joint_state.position)
         offset = 0.2 if self.mode == 'large_step' else 0.01
+        if self.mode == 'echo_x':
+            solution = [
+                request.ik_request.pose_stamped.pose.position.x] * 7
+        else:
+            solution = [value + offset for value in seed]
         response.solution.joint_state.name = list(
             request.ik_request.robot_state.joint_state.name)
-        response.solution.joint_state.position = [value + offset for value in seed]
+        response.solution.joint_state.position = solution
         response.error_code.val = MoveItErrorCodes.SUCCESS
         return response
 
@@ -121,6 +127,39 @@ class FakeGripperCommandSink(Node):
         self.commands.append(int(msg.data))
 
 
+class FakeControlGate(Node):
+    def __init__(self) -> None:
+        super().__init__('fake_left_control_gate')
+        self.enabled = False
+        self.requests: list[bool] = []
+        self.create_service(
+            SetBool, '/left/control_enable', self._handle)
+
+    def _handle(self, request, response):
+        self.enabled = bool(request.data)
+        self.requests.append(self.enabled)
+        response.success = True
+        response.message = 'ok'
+        return response
+
+
+class FakeStreamCommandSink(Node):
+    def __init__(self) -> None:
+        super().__init__('fake_stream_command_sink')
+        self.commands: list[dict] = []
+        self.command_event = threading.Event()
+        self.create_subscription(
+            JointState, '/left/control/joint_states', self._handle, 10)
+
+    def _handle(self, msg: JointState) -> None:
+        self.commands.append({
+            'name': list(msg.name),
+            'position': list(msg.position),
+            'stamp': (msg.header.stamp.sec, msg.header.stamp.nanosec),
+        })
+        self.command_event.set()
+
+
 class BridgeClient:
     def __init__(self, socket_path: str) -> None:
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -150,6 +189,9 @@ class MotionPipelineTest(unittest.TestCase):
         ik_mode: str = 'success',
         allow_real_motion: bool = False,
         allow_gripper_motion: bool = False,
+        watchdog_timeout: float = 5.0,
+        stream_feedback_timeout: float = 5.0,
+        stream_rate_hz: float = 100.0,
     ):
         self.tempdir = tempfile.TemporaryDirectory(prefix='nero-vla-motion-test-')
         socket_path = os.path.join(self.tempdir.name, 'bridge.sock')
@@ -157,14 +199,20 @@ class MotionPipelineTest(unittest.TestCase):
         self.ik = FakeIkServer(ik_mode)
         self.trajectory = FakeTrajectoryServer()
         self.gripper_sink = FakeGripperCommandSink()
+        self.control_gate = FakeControlGate()
+        self.stream_sink = FakeStreamCommandSink()
         self.bridge = NeroVlaBridge(parameter_overrides=[
             Parameter('socket_path', value=socket_path),
             Parameter('execution_mode', value=mode),
             Parameter('allow_real_motion', value=allow_real_motion),
+            Parameter('gripper_enabled', value=allow_gripper_motion),
             Parameter('allow_gripper_motion', value=allow_gripper_motion),
             Parameter('observation_timeout_sec', value=2.0),
-            Parameter('watchdog_timeout_sec', value=5.0),
+            Parameter('watchdog_timeout_sec', value=watchdog_timeout),
             Parameter('stop_service_timeout_sec', value=0.01),
+            Parameter('stream_command_rate_hz', value=stream_rate_hz),
+            Parameter(
+                'stream_feedback_timeout_sec', value=stream_feedback_timeout),
             Parameter('ik_timeout_sec', value=0.05),
             Parameter('ik_service_timeout_sec', value=0.3),
             Parameter('trajectory_server_timeout_sec', value=0.5),
@@ -176,6 +224,8 @@ class MotionPipelineTest(unittest.TestCase):
         for node in (
             self.feedback,
             self.gripper_sink,
+            self.control_gate,
+            self.stream_sink,
             self.ik,
             self.trajectory,
             self.bridge,
@@ -203,7 +253,15 @@ class MotionPipelineTest(unittest.TestCase):
             self.bridge.shutdown_bridge()
         if hasattr(self, 'executor'):
             self.executor.shutdown()
-        for name in ('feedback', 'gripper_sink', 'ik', 'trajectory', 'bridge'):
+        for name in (
+            'feedback',
+            'gripper_sink',
+            'control_gate',
+            'stream_sink',
+            'ik',
+            'trajectory',
+            'bridge',
+        ):
             node = getattr(self, name, None)
             if node is not None:
                 node.destroy_node()
@@ -260,6 +318,108 @@ class MotionPipelineTest(unittest.TestCase):
         self.assertEqual(len(goal['points']), 1)
         self.assertEqual(goal['points'][0]['positions'], [0.01] * 7)
         self.assertAlmostEqual(goal['points'][0]['time_from_start'], 0.05, places=6)
+
+    def test_stream_mode_publishes_and_holds_latest_joint_target(self) -> None:
+        self._start(
+            'stream',
+            allow_real_motion=True,
+            stream_rate_hz=50.0,
+        )
+        response = self.client.request(
+            'send_action', action=[0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.8])
+        self.assertTrue(response['ok'])
+        self.assertTrue(response['accepted'])
+        self.assertEqual(response['mode'], 'stream')
+        self.assertEqual(response['stream_sequence'], 1)
+        self.assertNotIn('trajectory_sequence', response)
+
+        deadline = time.monotonic() + 2.0
+        while len(self.stream_sink.commands) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertGreaterEqual(len(self.stream_sink.commands), 3)
+        self.assertFalse(self.trajectory.goal_event.is_set())
+        for command in self.stream_sink.commands:
+            self.assertEqual(
+                command['name'],
+                [f'joint{index}' for index in range(1, 8)],
+            )
+            self.assertEqual(command['position'], [0.01] * 7)
+        status = self.client.request('ping')
+        self.assertTrue(status['stream']['stream_gate_open'])
+        self.assertEqual(status['stream']['state'], 'streaming')
+        self.assertEqual(status['stream']['pending_sequence'], 1)
+        self.assertEqual(self.control_gate.requests[0], True)
+
+    def test_stream_stop_stops_command_publishing(self) -> None:
+        self._start('stream', allow_real_motion=True, stream_rate_hz=50.0)
+        response = self.client.request(
+            'send_action', action=[0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.8])
+        self.assertTrue(response['accepted'])
+        deadline = time.monotonic() + 2.0
+        while len(self.stream_sink.commands) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertGreaterEqual(len(self.stream_sink.commands), 3)
+
+        stopped = self.client.request('stop')
+        self.assertTrue(stopped['stopped'])
+        time.sleep(0.1)
+        count_after_stop = len(self.stream_sink.commands)
+        time.sleep(0.15)
+        self.assertLessEqual(len(self.stream_sink.commands), count_after_stop)
+        self.assertIn('stop command received', self.client.request('ping')['motion_fault'])
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if False in self.control_gate.requests:
+                break
+            time.sleep(0.02)
+        self.assertIn(False, self.control_gate.requests)
+
+    def test_stream_latest_target_replaces_pending_target(self) -> None:
+        self._start(
+            'stream',
+            ik_mode='echo_x',
+            allow_real_motion=True,
+            stream_rate_hz=20.0,
+        )
+        first = self.client.request(
+            'send_action', action=[0.10, 0.2, 0.3, 0.0, 0.0, 0.0, 0.8])
+        self.assertEqual(first['stream_sequence'], 1)
+        second = self.client.request(
+            'send_action', action=[0.11, 0.2, 0.3, 0.0, 0.0, 0.0, 0.8])
+        self.assertEqual(second['stream_sequence'], 2)
+        self.assertEqual(second['joint_target'], [0.11] * 7)
+
+        time.sleep(0.2)
+        self.assertGreaterEqual(len(self.stream_sink.commands), 2)
+        self.assertEqual(self.stream_sink.commands[-1]['position'], [0.11] * 7)
+        status = self.client.request('ping')
+        self.assertEqual(status['stream']['pending_sequence'], 2)
+        self.assertEqual(len(self.trajectory.goals), 0)
+
+    def test_stream_timeout_latches_fault_and_stops_publishing(self) -> None:
+        self._start(
+            'stream',
+            allow_real_motion=True,
+            watchdog_timeout=0.2,
+            stream_feedback_timeout=0.2,
+            stream_rate_hz=50.0,
+        )
+        response = self.client.request(
+            'send_action', action=[0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 0.8])
+        self.assertTrue(response['accepted'])
+        deadline = time.monotonic() + 2.0
+        fault = None
+        while time.monotonic() < deadline:
+            fault = self.client.request('ping')['motion_fault']
+            if fault:
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(fault)
+        self.assertIn('timeout', fault)
+        time.sleep(0.1)
+        count_after_fault = len(self.stream_sink.commands)
+        time.sleep(0.15)
+        self.assertLessEqual(len(self.stream_sink.commands), count_after_fault)
 
     def test_ik_failure_latches_motion_fault(self) -> None:
         self._start('trajectory', ik_mode='failure', allow_real_motion=True)

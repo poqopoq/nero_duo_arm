@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 WS="${NERO_DUO_WS:-${ROOT_DIR}/ros2_ws}"
 DEPLOY="${NERO_DUO_DEPLOY:-${ROOT_DIR}/deployment}"
+TCP_OFFSET='[0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 RUN_DIR="/tmp/nero_reset_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "${RUN_DIR}"
 LEFT_LOG="${RUN_DIR}/left_driver.log"
@@ -36,6 +37,7 @@ start_driver() {
     -p speed_percent:=5 \
     -p control_enabled:=false \
     -p effector_type:=none \
+    -p "tcp_offset:=${TCP_OFFSET}" \
     >"${log}" 2>&1 &
   echo $!
 }

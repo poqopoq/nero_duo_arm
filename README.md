@@ -12,6 +12,7 @@ ros2_ws/src/
   dual_nero_control/           # MoveIt FollowJointTrajectory bridge
   dual_nero_moveit_config/     # dual-arm MoveIt configuration
   dual_nero_calibration/       # checkerboard camera calibration
+  dual_nero_gripper_ft_sensor/ # gripper six-axis force/torque UART driver
   dual_nero_webapp/            # browser joint and camera dashboard
 
 dependencies/pyAgxArm/         # official AgileX Python SDK submodule
@@ -74,6 +75,7 @@ deployment/docs/05_vla_pipeline.md
 deployment/docs/11_stage8_webapp.md
 deployment/docs/12_usage_and_commands.md
 deployment/docs/17_gripper_can_diagnostics.md
+deployment/docs/18_gripper_ft_sensor.md
 ```
 
 ## Web dashboard

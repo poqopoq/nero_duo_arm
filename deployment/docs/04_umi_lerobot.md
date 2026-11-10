@@ -1,7 +1,7 @@
 # UMI 数据到 LeRobot
 
 > 转换环境：`/home/work/.venvs/umi_lerobot`（Python 3.10 / LeRobot 0.4.4）  
-> 训练/部署环境：LeRobot 0.6.1（Python 3.12）  
+> 训练/部署环境：LeRobot 0.6.2（Python 3.12）
 > 本流程只转换数据，不需要机械臂运动。
 
 ## 1. 输入类型
@@ -188,8 +188,9 @@ lerobot-train \
 
 1. 启动驱动、相机、MoveIt（轨迹桥先 dry-run）。
 2. 启动 VLA bridge，先 `execution_mode:=dry_run`。
-3. 启动 policy server 和 robot client，`fps=5`、`actions_per_chunk=10`。
-4. 依次切换 `ik_dry_run`、轨迹桥 dry-run、`trajectory + allow_real_motion`。
+3. 启动 `lerobot-policy-server` 和 `lerobot-rollout` remote client，`fps=5`。
+4. 依次切换 `ik_dry_run`、`stream` 预览 topic、`stream + allow_real_motion`
+   低速真机；需要逐 action 短轨迹时再验证 `trajectory + allow_real_motion`。
 5. 真机阶段必须现场监护、清空工作区、确认软件急停。
 
 完整 VLA 命令见 `05_vla_pipeline.md`。

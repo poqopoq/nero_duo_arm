@@ -13,6 +13,7 @@
 - [Web 控制台](docs/11_stage8_webapp.md) — 启动、安全顺序、相机
 - [使用手册与命令速查](docs/12_usage_and_commands.md) — 日常命令入口
 - [夹爪与 ZQWL-CANFD](docs/17_gripper_can_diagnostics.md) — 协议、只读、验收
+- [夹爪六维力传感器](docs/18_gripper_ft_sensor.md) — UART 协议、ROS 2 接口
 - [项目交接](PROJECT_HANDOFF.md) — 当前状态、映射、快速复验
 
 ## 快速检查
@@ -25,6 +26,12 @@ sudo ./scripts/enable_can.sh can_left 1000000
 sudo ./scripts/enable_can.sh can_right 1000000
 ./scripts/check_nero_feedback.sh can_left
 ./scripts/check_nero_feedback.sh can_right
+```
+
+驱动和 MoveIt 都启动后，校验驱动 `tcp_pose` 与 MoveIt `*_tcp_link` 是否一致：
+
+```bash
+/usr/bin/python3 ./scripts/check_tcp_contract.py
 ```
 
 脚本只读，不安装软件、不修改网络、不启动运动。真机运动前先读

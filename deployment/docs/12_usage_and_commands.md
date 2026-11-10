@@ -3,7 +3,7 @@
 > 工作区：`/home/work/nero_duo_arm`
 >
 > 环境：原生 Ubuntu 22.04 + ROS 2 Humble
-> 细节文档：硬件 `00`、驱动/急停 `01`、相机 `02`、MoveIt `03`、UMI `04`、VLA `05`、夹爪 `17`。
+> 细节文档：硬件 `00`、驱动/急停 `01`、相机 `02`、MoveIt `03`、UMI `04`、VLA `05`、夹爪 `17`、夹爪六维力 `18`。
 
 ## 0. 安全边界
 
@@ -73,7 +73,7 @@ cd /home/work/nero_duo_arm/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 launch dual_nero_webapp webapp.launch.py \
-  start_drivers:=true start_cameras:=true start_moveit:=true \
+  start_drivers:=true start_grippers:=false start_cameras:=true start_moveit:=true \
   moveit_dry_run:=true auto_enable:=false
 ```
 
@@ -106,16 +106,24 @@ ros2 launch dual_nero_webapp webapp.launch.py \
 
 ```bash
 ros2 launch dual_nero_webapp webapp.launch.py \
-  start_drivers:=true start_cameras:=true start_moveit:=true \
-  moveit_dry_run:=false auto_enable:=false
+  start_drivers:=true start_grippers:=false start_cameras:=true start_moveit:=true \
+  moveit_dry_run:=false auto_enable:=false \
+  recover_joint_limits:=true recover_joint_limits_delay_sec:=8.0
 ```
 
 默认 `speed_percent=5`。需要 40% 时显式加 `speed_percent:=40`。页面顶部应显示
 `MoveIt: ready (LIVE)`；显示 `DRY-RUN` 时不会驱动真机。
 
-常用平滑控制命令
+常用平滑控制命令（夹爪未连接时保持关闭）：
+
 ```bash
-./deployment/scripts/run_in_dialout.sh ros2 launch dual_nero_webapp webapp.launch.py   start_drivers:=true start_cameras:=true start_moveit:=true   moveit_dry_run:=false auto_enable:=false   speed_percent:=100   moveit_velocity_scaling:=0.10   moveit_acceleration_scaling:=0.10   trajectory_command_rate_hz:=100.0   trajectory_interpolation:=cubic   trajectory_settle_timeout_sec:=1.0   trajectory_settle_tolerance_rad:=0.01   gripper_allow_motion:=true   gripper_enable_motor:=false   gripper_speed_percent:=25   gripper_ramp_ms:=200   gripper_position_tolerance:=25
+./deployment/scripts/run_in_dialout.sh ros2 launch dual_nero_webapp webapp.launch.py \
+  start_drivers:=true start_grippers:=true start_cameras:=true start_moveit:=true \
+  moveit_dry_run:=false auto_enable:=false speed_percent:=100 \
+  moveit_velocity_scaling:=0.10 moveit_acceleration_scaling:=0.10 \
+  trajectory_command_rate_hz:=100.0 trajectory_interpolation:=cubic \
+  trajectory_settle_timeout_sec:=1.0 trajectory_settle_tolerance_rad:=0.01 \
+  gripper_allow_motion:=true gripper_enable_motor:=true
 ```
 ### 2.3 分终端启动
 
@@ -125,13 +133,32 @@ ros2 launch dual_nero_webapp webapp.launch.py \
 # dry-run：5% 速度，电机保持失能
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
-  speed_percent:=5 auto_enable:=false
+  speed_percent:=5 auto_enable:=false \
+  tcp_offset:='[0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 
 # 真机运动：40% 速度并自动使能
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
-  speed_percent:=40 auto_enable:=true
+  speed_percent:=40 auto_enable:=true \
+  recover_joint_limits:=true recover_joint_limits_delay_sec:=8.0 \
+  tcp_offset:='[0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 ```
+
+`tcp_offset` 默认已是 CTAG2F90D 捏合点；显式写出是为了和部署记录对齐。
+更换夹爪或修改 `*_tcp_z` 后必须同步调整，否则驱动 `tcp_pose` 与 MoveIt
+`*_tcp_link` 不一致，IK 会选到错误分支。
+
+上电后如果 `joint4` 接近 `2.19--2.20 rad`，先做只读检查和局部归位：
+
+```bash
+cd /home/work/nero_duo_arm
+./deployment/scripts/recover_joint_limits.sh --dry-run
+./deployment/scripts/recover_joint_limits.sh --target 2.115 --cap-margin 0.03
+```
+
+该脚本只调整 `joint4`，结束后关闭控制门但保持电机使能；不要顺手失能，否则
+右臂会被重力拉回限位。夹爪未连接时保持 `start_grippers:=false`，VLA bridge
+保持 `gripper_enabled:=false`。
 
 相机：
 
@@ -168,6 +195,9 @@ ros2 launch dual_nero_webapp webapp.launch.py
 | `moveit_dry_run` | `true` | `false` 才控制真机 |
 | `auto_enable` | `true` | 启动时使能电机；首次调试设为 `false` |
 | `speed_percent` | `5` | NERO 速度百分比 |
+| `recover_joint_limits` | `false` | 驱动启动后执行 joint4 局部归位并保持使能 |
+| `recover_joint_limits_delay_sec` | `8.0` | 等待反馈后再执行归位 |
+| `start_grippers` | `false` | 是否启动夹爪 CAN 驱动；未连接夹爪时保持关闭 |
 | `moveit_velocity_scaling` | `0.05` | MoveIt 速度缩放 |
 | `moveit_acceleration_scaling` | `0.05` | MoveIt 加速度缩放 |
 | `trajectory_command_rate_hz` | `50.0` | 轨迹桥指令频率 |
@@ -382,6 +412,9 @@ Depth 默认关闭；需要时加 `enable_scene_depth:=true` 或
 
 ## 7. Park 与复位
 
+上电后先执行上文的 `recover_joint_limits.sh`，再进入整体复位/Park；两者不要
+同时运行，且都要求工作区清空和现场监护。
+
 ```bash
 cd /home/work/nero_duo_arm
 ./deployment/scripts/reset_to_standard_support.sh --plan-only
@@ -427,8 +460,22 @@ cd /home/work/nero_duo_arm
 
 ```bash
 ./deployment/scripts/test_gripper_control.sh
+./deployment/scripts/test_gripper_ft_sensor.sh
 ./deployment/scripts/test_gripper_sweep.sh --sides both
 ./deployment/scripts/test_gripper_estop.sh --sides both --speed 10 --trigger-travel 40
+```
+
+夹爪六维力传感器：
+
+```bash
+ros2 launch dual_nero_gripper_ft_sensor gripper_ft.launch.py \
+  serial_port:=/dev/ttyUSB0 baud_rate:=921600
+ros2 topic echo /gripper_ft/data
+ros2 topic hz /gripper_ft/data
+ros2 service call /gripper_ft_node/get_version std_srvs/srv/Trigger "{}"
+# 先停止节点，再扫描串口与传感器 SN 的对应关系
+sg dialout -c '/usr/bin/python3 \
+  deployment/scripts/identify_gripper_ft_sensors.py'
 ```
 
 ## 9. UMI 与 VLA
@@ -436,6 +483,7 @@ cd /home/work/nero_duo_arm
 - UMI 转换、回读、上传和训练：`04_umi_lerobot.md`
 - 单臂/双臂 VLA bridge、policy server、robot client：`05_vla_pipeline.md`
 - 夹爪协议、只读启动和验收：`17_gripper_can_diagnostics.md`
+- 夹爪六维力传感器与 ROS 2 接口：`18_gripper_ft_sensor.md`
 
 ## 10. 常见问题
 

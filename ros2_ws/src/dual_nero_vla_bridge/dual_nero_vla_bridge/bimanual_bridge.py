@@ -10,9 +10,10 @@ the 20-D rot6d layout written by the Xense UMI HDF5 converter::
 
 An optional 14-D axis-angle schema is available for checkpoints that use the
 legacy NERO contract.  Both schemas are absolute end-effector targets.  IK is
-solved for both arms before either side is sent, and the resulting 14 joints
-are dispatched in one ``FollowJointTrajectory`` goal so the arms cannot start
-from different action steps.
+solved for both arms before either side is sent. The ``trajectory`` mode
+dispatches the 14 joints in one ``FollowJointTrajectory`` goal, while
+``stream`` publishes both sides back-to-back from the same 14-joint target at
+a fixed command rate.
 """
 from __future__ import annotations
 
@@ -55,7 +56,7 @@ from .vla_bridge import (
 SIDES = ('left', 'right')
 SCHEMAS = ('rot6d20', 'axis_angle14')
 ACTION_SIZES = {'rot6d20': 20, 'axis_angle14': 14}
-EXECUTION_MODES = ('dry_run', 'ik_dry_run', 'trajectory')
+EXECUTION_MODES = ('dry_run', 'ik_dry_run', 'trajectory', 'stream')
 LOCAL_JOINT_NAMES = tuple(f'joint{index}' for index in range(1, 8))
 ALL_JOINT_NAMES = tuple(
     f'{side}_joint{index}' for side in SIDES for index in range(1, 8))
@@ -179,12 +180,19 @@ class NeroBimanualVlaBridge(Node):
             'left_gripper_command_topic', '/left_gripper/position_cmd')
         self.declare_parameter(
             'right_gripper_command_topic', '/right_gripper/position_cmd')
+        self.declare_parameter('gripper_enabled', False)
         self.declare_parameter('allow_gripper_motion', False)
         self.declare_parameter('gripper_position_min', 0)
         self.declare_parameter('gripper_position_max', 990)
         self.declare_parameter('gripper_feedback_timeout_sec', 1.0)
         self.declare_parameter('watchdog_timeout_sec', 0.75)
         self.declare_parameter('stop_service_timeout_sec', 0.5)
+        self.declare_parameter(
+            'left_control_command_topic', '/left/control/joint_states')
+        self.declare_parameter(
+            'right_control_command_topic', '/right/control/joint_states')
+        self.declare_parameter('stream_command_rate_hz', 50.0)
+        self.declare_parameter('stream_feedback_timeout_sec', 0.75)
 
         self.declare_parameter('ik_service', '/compute_ik')
         self.declare_parameter('left_ik_group_name', 'left_arm')
@@ -239,8 +247,9 @@ class NeroBimanualVlaBridge(Node):
                 f'execution_mode must be one of {EXECUTION_MODES}, '
                 f'got {self.execution_mode!r}')
         self.allow_real_motion = bool(self.get_parameter('allow_real_motion').value)
-        if self.execution_mode == 'trajectory' and not self.allow_real_motion:
-            raise ValueError('execution_mode=trajectory requires allow_real_motion=true')
+        if self.execution_mode in ('trajectory', 'stream') and not self.allow_real_motion:
+            raise ValueError(
+                f'execution_mode={self.execution_mode} requires allow_real_motion=true')
 
         self.max_translation_step = float(
             self.get_parameter('max_translation_step_m').value)
@@ -270,8 +279,13 @@ class NeroBimanualVlaBridge(Node):
             side: str(self.get_parameter(f'{side}_gripper_command_topic').value)
             for side in SIDES
         }
+        self.gripper_enabled = bool(
+            self.get_parameter('gripper_enabled').value)
         self.allow_gripper_motion = bool(
             self.get_parameter('allow_gripper_motion').value)
+        if self.allow_gripper_motion and not self.gripper_enabled:
+            raise ValueError(
+                'allow_gripper_motion=true requires gripper_enabled=true')
         self.gripper_position_min = int(
             self.get_parameter('gripper_position_min').value)
         self.gripper_position_max = int(
@@ -284,6 +298,15 @@ class NeroBimanualVlaBridge(Node):
         self.watchdog_timeout = float(self.get_parameter('watchdog_timeout_sec').value)
         self.stop_service_timeout = float(
             self.get_parameter('stop_service_timeout_sec').value)
+        self.control_command_topics = {
+            side: str(self.get_parameter(
+                f'{side}_control_command_topic').value)
+            for side in SIDES
+        }
+        self.stream_command_rate_hz = float(
+            self.get_parameter('stream_command_rate_hz').value)
+        self.stream_feedback_timeout = float(
+            self.get_parameter('stream_feedback_timeout_sec').value)
         self.ik_timeout = float(self.get_parameter('ik_timeout_sec').value)
         self.ik_service_timeout = float(
             self.get_parameter('ik_service_timeout_sec').value)
@@ -300,6 +323,10 @@ class NeroBimanualVlaBridge(Node):
             raise ValueError('max_joint_step_rad must be positive')
         if self.trajectory_duration <= 0.0:
             raise ValueError('trajectory_duration_sec must be positive')
+        if self.stream_command_rate_hz <= 0.0:
+            raise ValueError('stream_command_rate_hz must be positive')
+        if self.stream_feedback_timeout <= 0.0:
+            raise ValueError('stream_feedback_timeout_sec must be positive')
 
         self.use_compressed_color = bool(
             self.get_parameter('use_compressed_color').value)
@@ -365,6 +392,8 @@ class NeroBimanualVlaBridge(Node):
         self._active_goal_handle: Any = None
         self._trajectory_abort = threading.Event()
         self._trajectory_worker: Optional[threading.Thread] = None
+        self._stream_worker: Optional[threading.Thread] = None
+        self._stream_gate_open = False
         self._trajectory_status: dict[str, Any] = {'state': 'idle'}
         self._stop_in_progress = False
         self._motion_fault_reason: Optional[str] = None
@@ -405,6 +434,11 @@ class NeroBimanualVlaBridge(Node):
         self._gripper_command_publishers = {
             side: self.create_publisher(
                 Int32, self.gripper_command_topics[side], topic_qos)
+            for side in SIDES
+        }
+        self._control_command_publishers = {
+            side: self.create_publisher(
+                JointState, self.control_command_topics[side], topic_qos)
             for side in SIDES
         }
         for spec in self.camera_specs:
@@ -449,13 +483,20 @@ class NeroBimanualVlaBridge(Node):
                 daemon=True,
             )
             self._trajectory_worker.start()
+        elif self.execution_mode == 'stream':
+            self._stream_worker = threading.Thread(
+                target=self._stream_worker_loop,
+                name='nero-bimanual-vla-stream',
+                daemon=True,
+            )
+            self._stream_worker.start()
         self._start_socket_server()
 
         self.get_logger().info(
             f'Bimanual VLA bridge listening at {self.socket_path}; '
             f'schema={self.action_schema}, execution_mode={self.execution_mode}, '
             f'tcp={self.tcp_topics}, cameras={[s["key"] for s in self.camera_specs]}, '
-            f'ik={self.ik_group_names}'
+            f'ik={self.ik_group_names}, commands={self.control_command_topics}'
         )
 
     @staticmethod
@@ -536,7 +577,7 @@ class NeroBimanualVlaBridge(Node):
         return True
 
     def _send_gripper_commands(self, applied_poses: dict[str, list[float]]) -> dict:
-        if not self.allow_gripper_motion:
+        if not self.gripper_enabled or not self.allow_gripper_motion:
             return {
                 'gripper_commanded': False,
                 'gripper_positions': {},
@@ -774,6 +815,11 @@ class NeroBimanualVlaBridge(Node):
                 gripper = values[offset + 6]
                 offset += 7
             parsed[side] = [*xyz, *rotation, gripper]
+        if not self.gripper_enabled:
+            # The model contract keeps the 20-D layout, but the gripper channel
+            # is forced neutral so an unconnected gripper can never be driven.
+            for side in SIDES:
+                parsed[side][6] = 0.0
         return parsed
 
     def _encode_side_action(self, action: list[float]) -> list[float]:
@@ -946,6 +992,7 @@ class NeroBimanualVlaBridge(Node):
                 **self._trajectory_status,
                 'pending_sequence': self._pending_sequence,
                 'fault': self._motion_fault_reason,
+                'stream_gate_open': self._stream_gate_open,
             }
 
     def _queue_joint_target(self, joints: list[float]) -> int:
@@ -958,14 +1005,23 @@ class NeroBimanualVlaBridge(Node):
 
     def _abort_motion(self, reason: str) -> None:
         with self._motion_condition:
-            if self._motion_fault_reason is None:
+            first_fault = self._motion_fault_reason is None
+            if first_fault:
                 self._motion_fault_reason = reason
+                self._trajectory_status = {
+                    'state': 'fault',
+                    'reason': reason,
+                    'updated_mono': time.monotonic(),
+                }
             self._pending_joint_target = None
+            self._stream_gate_open = False
             self._trajectory_abort.set()
             active_goal = self._active_goal_handle
             start_stop_thread = not self._stop_in_progress
             self._stop_in_progress = True
             self._motion_condition.notify_all()
+        if not first_fault:
+            return
         self.get_logger().error(f'Bimanual VLA motion aborted: {reason}')
         if active_goal is not None:
             active_goal.cancel_goal_async()
@@ -1078,8 +1134,116 @@ class NeroBimanualVlaBridge(Node):
             except Exception as exc:  # noqa: BLE001
                 self._abort_motion(f'bimanual trajectory worker failed: {exc}')
 
+    def _set_stream_gate(self, side: str, enabled: bool) -> bool:
+        client = self._gate_clients[side]
+        if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
+            self.get_logger().error(
+                f'{side} control_enable service unavailable')
+            return False
+        request = SetBool.Request()
+        request.data = enabled
+        future = client.call_async(request)
+        if not self._wait_for_future(
+            future,
+            self.stop_service_timeout + 0.2,
+            self._trajectory_abort,
+        ):
+            return False
+        try:
+            response = future.result()
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().error(
+                f'Failed to set {side} control gate to {enabled}: {exc}')
+            return False
+        return bool(response is not None and response.success)
+
+    def _enable_stream_gates(self) -> bool:
+        for side in SIDES:
+            if not self._set_stream_gate(side, True):
+                for opened_side in SIDES:
+                    if opened_side == side:
+                        break
+                    self._set_stream_gate(opened_side, False)
+                return False
+        return True
+
+    def _publish_stream_command(self, joints: list[float]) -> None:
+        stamp = self.get_clock().now().to_msg()
+        for side, offset in (('left', 0), ('right', 7)):
+            message = JointState()
+            message.header.stamp = stamp
+            message.name = list(LOCAL_JOINT_NAMES)
+            message.position = list(joints[offset:offset + 7])
+            self._control_command_publishers[side].publish(message)
+
+    def _stream_worker_loop(self) -> None:
+        period = 1.0 / self.stream_command_rate_hz
+        while not self._shutdown.is_set():
+            with self._motion_condition:
+                while (
+                    self._pending_joint_target is None
+                    and not self._trajectory_abort.is_set()
+                    and not self._shutdown.is_set()
+                ):
+                    self._motion_condition.wait(timeout=0.1)
+                if self._shutdown.is_set():
+                    return
+                if self._trajectory_abort.is_set():
+                    self._motion_condition.wait(timeout=0.1)
+                    continue
+                if self._pending_joint_target is None:
+                    continue
+                gate_open = self._stream_gate_open
+
+            if not gate_open:
+                if not self._enable_stream_gates():
+                    if self._shutdown.is_set() or self._trajectory_abort.is_set():
+                        continue
+                    self._abort_motion('failed to enable bimanual control gates')
+                    continue
+                with self._motion_condition:
+                    if self._trajectory_abort.is_set():
+                        continue
+                    self._stream_gate_open = True
+                self.get_logger().info(
+                    'Bimanual control gates enabled for streaming')
+
+            next_tick = time.monotonic()
+            while not self._shutdown.is_set():
+                now = time.monotonic()
+                if now < next_tick:
+                    time.sleep(min(next_tick - now, 0.05))
+                    continue
+
+                with self._motion_condition:
+                    if self._trajectory_abort.is_set():
+                        break
+                    if self._pending_joint_target is None:
+                        break
+                    joints = list(self._pending_joint_target)
+                    sequence = self._pending_sequence
+                with self._lock:
+                    last_action_mono = self._last_action_mono
+                if (
+                    last_action_mono <= 0.0
+                    or now - last_action_mono > self.stream_feedback_timeout
+                ):
+                    self._abort_motion('bimanual stream action feedback timeout')
+                    return
+                try:
+                    self._publish_stream_command(joints)
+                except Exception as exc:  # noqa: BLE001
+                    self._abort_motion(
+                        f'bimanual stream command publish failed: {exc}')
+                    return
+                self._set_trajectory_status(
+                    state='streaming', sequence=sequence)
+                next_tick += period
+                if next_tick < time.monotonic():
+                    next_tick = time.monotonic()
+
     def _watchdog_tick(self) -> None:
-        if self.execution_mode != 'trajectory':
+        if self.execution_mode not in ('trajectory', 'stream'):
             return
         now = time.monotonic()
         with self._lock:
@@ -1093,9 +1257,12 @@ class NeroBimanualVlaBridge(Node):
             self._abort_motion('VLA action timeout')
 
     def _request_stop(self) -> None:
-        if self.execution_mode != 'trajectory' or not self.allow_real_motion:
+        if self.execution_mode not in ('trajectory', 'stream') or not self.allow_real_motion:
             self.get_logger().warn('Stop requested without real motion enabled')
             return
+        with self._motion_condition:
+            self._stream_gate_open = False
+            self._motion_condition.notify_all()
         for side, client in self._stop_clients.items():
             if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
                 self.get_logger().error(
@@ -1126,11 +1293,15 @@ class NeroBimanualVlaBridge(Node):
                 'dry_run': self.execution_mode == 'dry_run',
                 'execution_mode': self.execution_mode,
                 'real_motion_enabled': (
-                    self.execution_mode == 'trajectory' and self.allow_real_motion),
+                    self.execution_mode in ('trajectory', 'stream')
+                    and self.allow_real_motion),
                 'ik_ready': self._ik_client.service_is_ready(),
                 'trajectory_ready': self._trajectory_client.server_is_ready(),
+                'stream_command_topics': dict(self.control_command_topics),
                 'motion_fault': self._motion_fault_reason,
                 'trajectory': self._trajectory_snapshot(),
+                'stream': self._trajectory_snapshot(),
+                'gripper_enabled': self.gripper_enabled,
                 'allow_gripper_motion': self.allow_gripper_motion,
                 'gripper_feedback_ready': self._gripper_feedback_ready(),
                 'gripper_width_topics': dict(self.gripper_width_topics),
@@ -1203,7 +1374,7 @@ class NeroBimanualVlaBridge(Node):
                     'gripper_positions': {},
                     'gripper_error': None,
                 }, b''
-            if (self.execution_mode == 'trajectory'
+            if (self.execution_mode in ('trajectory', 'stream')
                     and self._motion_fault_reason is not None):
                 return {
                     'ok': True,
@@ -1218,7 +1389,15 @@ class NeroBimanualVlaBridge(Node):
                 joint_targets = self._solve_bimanual(
                     applied_poses, snapshot['joints'])
             except MotionError as exc:
-                if self.execution_mode == 'trajectory':
+                self.get_logger().warn(
+                    'Bimanual VLA action rejected: raw='
+                    + ' '.join(f'{value:+.4f}' for value in action)
+                    + ' applied='
+                    + ' '.join(f'{value:+.4f}' for value in applied)
+                    + f'; error: {exc}',
+                    throttle_duration_sec=1.0,
+                )
+                if self.execution_mode in ('trajectory', 'stream'):
                     self._abort_motion(str(exc))
                 return {
                     'ok': True,
@@ -1252,6 +1431,11 @@ class NeroBimanualVlaBridge(Node):
                 return result, b''
 
             sequence = self._queue_joint_target(joint_target)
+            sequence_key = (
+                'stream_sequence'
+                if self.execution_mode == 'stream'
+                else 'trajectory_sequence'
+            )
             result = {
                 'ok': True,
                 'action': applied,
@@ -1262,12 +1446,12 @@ class NeroBimanualVlaBridge(Node):
                 'mode': self.execution_mode,
                 'joint_target': joint_target,
                 'joint_target_by_side': joint_targets,
-                'trajectory_sequence': sequence,
+                sequence_key: sequence,
             }
             result.update(self._send_gripper_commands(applied_poses))
             return result, b''
         if command == 'stop':
-            if self.execution_mode == 'trajectory':
+            if self.execution_mode in ('trajectory', 'stream'):
                 self._abort_motion('stop command received')
             else:
                 self._request_stop()
@@ -1342,6 +1526,7 @@ class NeroBimanualVlaBridge(Node):
         self._shutdown.set()
         with self._motion_condition:
             self._pending_joint_target = None
+            self._stream_gate_open = False
             self._trajectory_abort.set()
             active_goal = self._active_goal_handle
             self._motion_condition.notify_all()
@@ -1353,7 +1538,13 @@ class NeroBimanualVlaBridge(Node):
             except KeyboardInterrupt:
                 pass
             self._trajectory_worker = None
-        if self.execution_mode == 'trajectory' and self.allow_real_motion:
+        if self._stream_worker is not None:
+            try:
+                self._stream_worker.join(timeout=1.0)
+            except KeyboardInterrupt:
+                pass
+            self._stream_worker = None
+        if self.execution_mode in ('trajectory', 'stream') and self.allow_real_motion:
             self._request_stop()
         if self._server is not None:
             try:
@@ -1374,7 +1565,10 @@ class NeroBimanualVlaBridge(Node):
 
 
 def main(args: Optional[list[str]] = None) -> None:
-    rclpy.init(args=args)
+    # Keep the context alive through shutdown_bridge so the emergency-stop and
+    # control-gate services can still be called on Ctrl-C.
+    from rclpy.signals import SignalHandlerOptions
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = NeroBimanualVlaBridge()
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)

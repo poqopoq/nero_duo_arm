@@ -42,6 +42,7 @@ class NeroBimanual(Robot):
 
     config_class = NeroBimanualConfig
     name = 'nero_bimanual_ros'
+    supports_position_hold = True
 
     def __init__(self, config: NeroBimanualConfig) -> None:
         super().__init__(config)

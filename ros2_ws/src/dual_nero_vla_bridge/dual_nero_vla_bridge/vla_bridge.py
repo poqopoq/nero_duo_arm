@@ -7,9 +7,9 @@ Unix stream socket using :mod:`dual_nero_vla_bridge.protocol`.
 
 ``send_action`` applies workspace and per-step safety filters. Depending on
 ``execution_mode`` it can stop after filtering, solve and report IK without
-motion, or send a short joint trajectory asynchronously. The default is
-``dry_run`` and ``trajectory`` mode additionally requires
-``allow_real_motion=true``.
+motion, send a short joint trajectory asynchronously, or stream the latest
+joint target to the driver. The default is ``dry_run`` and both real-motion
+modes additionally require ``allow_real_motion=true``.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ from .protocol import ProtocolError, recv_frame, send_frame
 
 STATE_SIZE = 7
 LOCAL_JOINT_NAMES = tuple(f'joint{index}' for index in range(1, 8))
-EXECUTION_MODES = ('dry_run', 'ik_dry_run', 'trajectory')
+EXECUTION_MODES = ('dry_run', 'ik_dry_run', 'trajectory', 'stream')
 
 
 class MotionError(RuntimeError):
@@ -169,12 +169,16 @@ class NeroVlaBridge(Node):
         self.declare_parameter('gripper_max_m', 0.09)
         self.declare_parameter('gripper_width_topic', '')
         self.declare_parameter('gripper_command_topic', '')
+        self.declare_parameter('gripper_enabled', False)
         self.declare_parameter('allow_gripper_motion', False)
         self.declare_parameter('gripper_position_min', 0)
         self.declare_parameter('gripper_position_max', 990)
         self.declare_parameter('gripper_feedback_timeout_sec', 1.0)
         self.declare_parameter('watchdog_timeout_sec', 0.75)
         self.declare_parameter('stop_service_timeout_sec', 0.5)
+        self.declare_parameter('control_command_topic', '')
+        self.declare_parameter('stream_command_rate_hz', 50.0)
+        self.declare_parameter('stream_feedback_timeout_sec', 0.75)
         self.declare_parameter('ik_service', '/compute_ik')
         self.declare_parameter('ik_group_name', '')
         self.declare_parameter('ik_link_name', '')
@@ -209,9 +213,9 @@ class NeroVlaBridge(Node):
             raise ValueError(
                 f'execution_mode must be one of {EXECUTION_MODES}, got {self.execution_mode!r}')
         self.allow_real_motion = bool(self.get_parameter('allow_real_motion').value)
-        if self.execution_mode == 'trajectory' and not self.allow_real_motion:
+        if self.execution_mode in ('trajectory', 'stream') and not self.allow_real_motion:
             raise ValueError(
-                'execution_mode=trajectory requires allow_real_motion=true')
+                f'execution_mode={self.execution_mode} requires allow_real_motion=true')
         self.max_translation_step = float(self.get_parameter('max_translation_step_m').value)
         self.max_rotation_step = float(self.get_parameter('max_rotation_step_rad').value)
         self.max_joint_step = float(self.get_parameter('max_joint_step_rad').value)
@@ -236,8 +240,13 @@ class NeroVlaBridge(Node):
             str(self.get_parameter('gripper_command_topic').value)
             or f'/{self.side}_gripper/position_cmd'
         )
+        self.gripper_enabled = bool(
+            self.get_parameter('gripper_enabled').value)
         self.allow_gripper_motion = bool(
             self.get_parameter('allow_gripper_motion').value)
+        if self.allow_gripper_motion and not self.gripper_enabled:
+            raise ValueError(
+                'allow_gripper_motion=true requires gripper_enabled=true')
         self.gripper_position_min = int(
             self.get_parameter('gripper_position_min').value)
         self.gripper_position_max = int(
@@ -249,6 +258,14 @@ class NeroVlaBridge(Node):
             0.1, float(self.get_parameter('gripper_feedback_timeout_sec').value))
         self.watchdog_timeout = float(self.get_parameter('watchdog_timeout_sec').value)
         self.stop_service_timeout = float(self.get_parameter('stop_service_timeout_sec').value)
+        self.control_command_topic = (
+            str(self.get_parameter('control_command_topic').value)
+            or f'/{self.side}/control/joint_states'
+        )
+        self.stream_command_rate_hz = float(
+            self.get_parameter('stream_command_rate_hz').value)
+        self.stream_feedback_timeout = float(
+            self.get_parameter('stream_feedback_timeout_sec').value)
         self.ik_group_name = (
             str(self.get_parameter('ik_group_name').value) or f'{self.side}_arm')
         self.ik_link_name = (
@@ -271,6 +288,10 @@ class NeroVlaBridge(Node):
             raise ValueError('max_joint_step_rad must be positive')
         if self.trajectory_duration <= 0.0:
             raise ValueError('trajectory_duration_sec must be positive')
+        if self.stream_command_rate_hz <= 0.0:
+            raise ValueError('stream_command_rate_hz must be positive')
+        if self.stream_feedback_timeout <= 0.0:
+            raise ValueError('stream_feedback_timeout_sec must be positive')
 
         self._lock = threading.Lock()
         self._tcp_xyz: Optional[list[float]] = None
@@ -295,6 +316,8 @@ class NeroVlaBridge(Node):
         self._active_goal_handle: Any = None
         self._trajectory_abort = threading.Event()
         self._trajectory_worker: Optional[threading.Thread] = None
+        self._stream_worker: Optional[threading.Thread] = None
+        self._stream_gate_open = False
         self._trajectory_status: dict[str, Any] = {'state': 'idle'}
         self._stop_in_progress = False
         self._motion_fault_reason: Optional[str] = None
@@ -319,6 +342,8 @@ class NeroVlaBridge(Node):
             Float32, self.gripper_width_topic, self._gripper_width_cb, topic_qos)
         self._gripper_command_publisher = self.create_publisher(
             Int32, self.gripper_command_topic, topic_qos)
+        self._control_command_publisher = self.create_publisher(
+            JointState, self.control_command_topic, topic_qos)
         if self.use_compressed_image:
             self.create_subscription(
                 CompressedImage,
@@ -352,12 +377,20 @@ class NeroVlaBridge(Node):
                 daemon=True,
             )
             self._trajectory_worker.start()
+        elif self.execution_mode == 'stream':
+            self._stream_worker = threading.Thread(
+                target=self._stream_worker_loop,
+                name='nero-vla-stream',
+                daemon=True,
+            )
+            self._stream_worker.start()
         self._start_socket_server()
 
         self.get_logger().info(
             f'VLA bridge listening at {self.socket_path}; side={self.side}, '
             f'execution_mode={self.execution_mode}, tcp={self.tcp_topic}, '
             f'joints={self.joint_state_topic}, '
+            f'command={self.control_command_topic}, '
             f'image={self.image_compressed_topic if self.use_compressed_image else self.image_topic}, '
             f'ik={self.ik_group_name}/{self.ik_link_name} in {self.ik_frame_id}'
         )
@@ -425,7 +458,7 @@ class NeroVlaBridge(Node):
             )
 
     def _send_gripper_command(self, applied: list[float]) -> dict:
-        if not self.allow_gripper_motion:
+        if not self.gripper_enabled or not self.allow_gripper_motion:
             return {
                 'gripper_commanded': False,
                 'gripper_position': None,
@@ -575,7 +608,8 @@ class NeroVlaBridge(Node):
         rotation, rotation_clamped = _clamp_rotation_step(
             current_state[3:6], applied[3:6], self.max_rotation_step)
         applied[3:6] = rotation
-        applied[6] = max(0.0, min(1.0, applied[6]))
+        applied[6] = (
+            max(0.0, min(1.0, applied[6])) if self.gripper_enabled else 0.0)
         return applied, clamped or rotation_clamped
 
     def _wait_for_future(
@@ -685,6 +719,7 @@ class NeroVlaBridge(Node):
                 **self._trajectory_status,
                 'pending_sequence': self._pending_sequence,
                 'fault': self._motion_fault_reason,
+                'stream_gate_open': self._stream_gate_open,
             }
 
     def _queue_joint_target(self, joints: list[float]) -> int:
@@ -697,14 +732,23 @@ class NeroVlaBridge(Node):
 
     def _abort_motion(self, reason: str) -> None:
         with self._motion_condition:
-            if self._motion_fault_reason is None:
+            first_fault = self._motion_fault_reason is None
+            if first_fault:
                 self._motion_fault_reason = reason
+                self._trajectory_status = {
+                    'state': 'fault',
+                    'reason': reason,
+                    'updated_mono': time.monotonic(),
+                }
             self._pending_joint_target = None
+            self._stream_gate_open = False
             self._trajectory_abort.set()
             active_goal = self._active_goal_handle
             start_stop_thread = not self._stop_in_progress
             self._stop_in_progress = True
             self._motion_condition.notify_all()
+        if not first_fault:
+            return
         self.get_logger().error(f'VLA motion aborted: {reason}')
         if active_goal is not None:
             active_goal.cancel_goal_async()
@@ -815,8 +859,104 @@ class NeroVlaBridge(Node):
             except Exception as exc:  # noqa: BLE001
                 self._abort_motion(f'trajectory worker failed: {exc}')
 
+    def _enable_stream_gate(self) -> bool:
+        client = self._gate_clients[self.side]
+        if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
+            self.get_logger().error(
+                f'{self.side} control_enable service unavailable')
+            return False
+        request = SetBool.Request()
+        request.data = True
+        future = client.call_async(request)
+        if not self._wait_for_future(
+            future,
+            self.stop_service_timeout + 0.2,
+            self._trajectory_abort,
+        ):
+            return False
+        try:
+            response = future.result()
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().error(
+                f'Failed to enable {self.side} control gate: {exc}')
+            return False
+        return bool(response is not None and response.success)
+
+    def _publish_stream_command(self, joints: list[float]) -> None:
+        message = JointState()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.name = list(LOCAL_JOINT_NAMES)
+        message.position = list(joints)
+        self._control_command_publisher.publish(message)
+
+    def _stream_worker_loop(self) -> None:
+        period = 1.0 / self.stream_command_rate_hz
+        while not self._shutdown.is_set():
+            with self._motion_condition:
+                while (
+                    self._pending_joint_target is None
+                    and not self._trajectory_abort.is_set()
+                    and not self._shutdown.is_set()
+                ):
+                    self._motion_condition.wait(timeout=0.1)
+                if self._shutdown.is_set():
+                    return
+                if self._trajectory_abort.is_set():
+                    self._motion_condition.wait(timeout=0.1)
+                    continue
+                if self._pending_joint_target is None:
+                    continue
+                gate_open = self._stream_gate_open
+
+            if not gate_open:
+                if not self._enable_stream_gate():
+                    if self._shutdown.is_set() or self._trajectory_abort.is_set():
+                        continue
+                    self._abort_motion(
+                        f'failed to enable {self.side} control gate')
+                    continue
+                with self._motion_condition:
+                    if self._trajectory_abort.is_set():
+                        continue
+                    self._stream_gate_open = True
+                self.get_logger().info(
+                    f'{self.side} control gate enabled for streaming')
+
+            next_tick = time.monotonic()
+            while not self._shutdown.is_set():
+                now = time.monotonic()
+                if now < next_tick:
+                    time.sleep(min(next_tick - now, 0.05))
+                    continue
+
+                with self._motion_condition:
+                    if self._trajectory_abort.is_set():
+                        break
+                    if self._pending_joint_target is None:
+                        break
+                    joints = list(self._pending_joint_target)
+                    sequence = self._pending_sequence
+                with self._lock:
+                    last_action_mono = self._last_action_mono
+                if (
+                    last_action_mono <= 0.0
+                    or now - last_action_mono > self.stream_feedback_timeout
+                ):
+                    self._abort_motion('stream action feedback timeout')
+                    return
+                try:
+                    self._publish_stream_command(joints)
+                except Exception as exc:  # noqa: BLE001
+                    self._abort_motion(f'stream command publish failed: {exc}')
+                    return
+                self._set_trajectory_status(
+                    state='streaming', sequence=sequence)
+                next_tick += period
+                if next_tick < time.monotonic():
+                    next_tick = time.monotonic()
+
     def _watchdog_tick(self) -> None:
-        if self.execution_mode != 'trajectory':
+        if self.execution_mode not in ('trajectory', 'stream'):
             return
         now = time.monotonic()
         with self._lock:
@@ -828,9 +968,12 @@ class NeroVlaBridge(Node):
             self._abort_motion('VLA action timeout')
 
     def _request_stop(self) -> None:
-        if self.execution_mode != 'trajectory' or not self.allow_real_motion:
+        if self.execution_mode not in ('trajectory', 'stream') or not self.allow_real_motion:
             self.get_logger().warn('Stop requested without real motion enabled')
             return
+        with self._motion_condition:
+            self._stream_gate_open = False
+            self._motion_condition.notify_all()
         for side, client in self._stop_clients.items():
             if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
                 self.get_logger().error(f'{side} emergency_stop service unavailable')
@@ -860,11 +1003,15 @@ class NeroVlaBridge(Node):
                 'dry_run': self.execution_mode == 'dry_run',
                 'execution_mode': self.execution_mode,
                 'real_motion_enabled': (
-                    self.execution_mode == 'trajectory' and self.allow_real_motion),
+                    self.execution_mode in ('trajectory', 'stream')
+                    and self.allow_real_motion),
                 'ik_ready': ik_ready,
                 'trajectory_ready': trajectory_ready,
+                'stream_command_topic': self.control_command_topic,
                 'motion_fault': self._motion_fault_reason,
                 'trajectory': self._trajectory_snapshot(),
+                'stream': self._trajectory_snapshot(),
+                'gripper_enabled': self.gripper_enabled,
                 'allow_gripper_motion': self.allow_gripper_motion,
                 'gripper_feedback_ready': self._gripper_feedback_ready(),
                 'gripper_width_topic': self.gripper_width_topic,
@@ -918,7 +1065,10 @@ class NeroVlaBridge(Node):
                     'gripper_position': None,
                     'gripper_error': None,
                 }, b''
-            if self.execution_mode == 'trajectory' and self._motion_fault_reason is not None:
+            if (
+                self.execution_mode in ('trajectory', 'stream')
+                and self._motion_fault_reason is not None
+            ):
                 return {
                     'ok': True,
                     'action': applied,
@@ -931,7 +1081,7 @@ class NeroVlaBridge(Node):
             try:
                 joint_target = self._solve_ik(applied, snapshot['joints'])
             except MotionError as exc:
-                if self.execution_mode == 'trajectory':
+                if self.execution_mode in ('trajectory', 'stream'):
                     self._abort_motion(str(exc))
                 return {
                     'ok': True,
@@ -961,6 +1111,11 @@ class NeroVlaBridge(Node):
                 return result, b''
 
             sequence = self._queue_joint_target(joint_target)
+            sequence_key = (
+                'stream_sequence'
+                if self.execution_mode == 'stream'
+                else 'trajectory_sequence'
+            )
             result = {
                 'ok': True,
                 'action': applied,
@@ -970,12 +1125,12 @@ class NeroVlaBridge(Node):
                 'queued': True,
                 'mode': self.execution_mode,
                 'joint_target': joint_target,
-                'trajectory_sequence': sequence,
+                sequence_key: sequence,
             }
             result.update(self._send_gripper_command(applied))
             return result, b''
         if command == 'stop':
-            if self.execution_mode == 'trajectory':
+            if self.execution_mode in ('trajectory', 'stream'):
                 self._abort_motion('stop command received')
             else:
                 self._request_stop()
@@ -1042,6 +1197,7 @@ class NeroVlaBridge(Node):
         self._shutdown.set()
         with self._motion_condition:
             self._pending_joint_target = None
+            self._stream_gate_open = False
             self._trajectory_abort.set()
             active_goal = self._active_goal_handle
             self._motion_condition.notify_all()
@@ -1050,7 +1206,10 @@ class NeroVlaBridge(Node):
         if self._trajectory_worker is not None:
             self._trajectory_worker.join(timeout=1.0)
             self._trajectory_worker = None
-        if self.execution_mode == 'trajectory' and self.allow_real_motion:
+        if self._stream_worker is not None:
+            self._stream_worker.join(timeout=1.0)
+            self._stream_worker = None
+        if self.execution_mode in ('trajectory', 'stream') and self.allow_real_motion:
             self._request_stop()
         if self._server is not None:
             try:

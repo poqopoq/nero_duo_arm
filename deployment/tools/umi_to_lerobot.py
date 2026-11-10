@@ -182,8 +182,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(CONTRACTS),
         default="umi-sroi",
         help="Output feature contract. 'umi-sroi' keeps the published 7-D "
-             "action and camera feature; 'nero-ros' uses ee.rx/ry/rz + "
-             "ee.gripper, camera1, observation.state, and robot_type nero_ros.",
+             "action and camera feature; 'nero-ros' uses ee.x.pos ... "
+             "ee.gripper.pos, camera1, observation.state, and robot_type nero_ros.",
     )
     parser.add_argument(
         "--image-key",

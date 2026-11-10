@@ -1,0 +1,4 @@
+uint32 baud_rate
+---
+bool success
+string message

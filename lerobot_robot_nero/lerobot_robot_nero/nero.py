@@ -13,10 +13,11 @@ from .config_nero import NeroConfig
 logger = logging.getLogger(__name__)
 
 STATE_NAMES = (
-    'ee.x', 'ee.y', 'ee.z',
-    'ee.rx', 'ee.ry', 'ee.rz',
-    'ee.gripper',
+    'ee.x.pos', 'ee.y.pos', 'ee.z.pos',
+    'ee.rx.pos', 'ee.ry.pos', 'ee.rz.pos',
+    'ee.gripper.pos',
 )
+ACTION_NAMES = STATE_NAMES
 
 
 class Nero(Robot):
@@ -29,6 +30,7 @@ class Nero(Robot):
 
     config_class = NeroConfig
     name = 'nero_ros'
+    supports_position_hold = True
 
     def __init__(self, config: NeroConfig) -> None:
         super().__init__(config)
@@ -49,7 +51,7 @@ class Nero(Robot):
 
     @property
     def action_features(self) -> dict:
-        return {name: float for name in STATE_NAMES}
+        return {name: float for name in ACTION_NAMES}
 
     @property
     def is_connected(self) -> bool:
@@ -116,10 +118,10 @@ class Nero(Robot):
 
     def send_action(self, action: dict) -> dict:
         self._require_connected()
-        missing = [name for name in STATE_NAMES if name not in action]
+        missing = [name for name in ACTION_NAMES if name not in action]
         if missing:
             raise ValueError(f'action is missing fields: {missing}')
-        values = [float(action[name]) for name in STATE_NAMES]
+        values = [float(action[name]) for name in ACTION_NAMES]
         if not all(np.isfinite(value) for value in values):
             raise ValueError('action contains a non-finite value')
         try:
@@ -127,11 +129,13 @@ class Nero(Robot):
         except BridgeError as exc:
             raise RuntimeError(f'failed to send NERO action: {exc}') from exc
         if header.get('accepted') is False:
-            logger.warning('NERO bridge rejected action: %s', header.get('error', 'unknown error'))
+            error = header.get('error', 'unknown error')
+            logger.error('NERO bridge rejected action: %s', error)
+            raise RuntimeError(f'NERO bridge rejected action: {error}')
         applied = header.get('action')
-        if not isinstance(applied, list) or len(applied) != len(STATE_NAMES):
+        if not isinstance(applied, list) or len(applied) != len(ACTION_NAMES):
             raise RuntimeError(f'bridge returned invalid applied action: {applied!r}')
-        return {name: float(value) for name, value in zip(STATE_NAMES, applied)}
+        return {name: float(value) for name, value in zip(ACTION_NAMES, applied)}
 
     def disconnect(self) -> None:
         if not self._connected:

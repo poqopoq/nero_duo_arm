@@ -111,8 +111,43 @@ right_joint7:  0.118996548
 - `joint4` 原生上限为 `2.146755`；部署保守限幅 `2.14`，不要改回 `2.20`。
 - `joint6` 使用官方范围 `[-0.7330383, 0.8726646]`。
 - 支撑位通过 MoveIt `check_state_validity`，要求 `valid=True, contacts=0`。
+- 复位后保持电机使能、只关闭 `/control_enable` 门。右臂失能后会被重力带回
+  `joint4≈2.198`，再次执行前必须重新归位到 `2.12`。
+- 驱动必须带 `tcp_offset=[0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]`；
+  `reset_to_standard_support.sh` 已内置该参数。TCP 自检见
+  `deployment/scripts/check_tcp_contract.py`。
 
-## 5. 复位到支撑位
+## 5. 上电归位与复位到支撑位
+
+### 5.1 上电 joint4 局部归位
+
+上电反馈可能让 `joint4` 停在 `2.19--2.20 rad`，超过部署上限 `2.14`，此时
+直接做 FK/IK 或整体 Park 会失败。先执行只改 `joint4` 的低速归位：
+
+```bash
+cd /home/work/nero_duo_arm
+
+# 只读检查，不使能、不运动
+./deployment/scripts/recover_joint_limits.sh --dry-run
+
+# 真实局部归位；结束后关闭控制门，但保持电机使能
+./deployment/scripts/recover_joint_limits.sh --target 2.115 --cap-margin 0.03
+```
+
+脚本会拒绝陈旧反馈、其它关节超限或修正量过大的情况，不访问夹爪。驱动 launch
+也可以自动执行：
+
+```bash
+ros2 launch dual_nero_control dual_nero_drivers.launch.py \
+  can_left:=can_left can_right:=can_right \
+  speed_percent:=5 auto_enable:=true \
+  recover_joint_limits:=true recover_joint_limits_delay_sec:=8.0
+```
+
+归位是真实运动，必须有支撑、清空工作区和现场监护。不要用 `--disable`，也不要
+在归位结束后关闭电机使能。
+
+### 5.2 整体复位到支撑位
 
 ```bash
 cd /home/work/nero_duo_arm

@@ -102,6 +102,10 @@ def generate_launch_description():
             'can_right': LaunchConfiguration('can_right'),
             'speed_percent': LaunchConfiguration('speed_percent'),
             'auto_enable': LaunchConfiguration('auto_enable'),
+            'recover_joint_limits': LaunchConfiguration(
+                'recover_joint_limits'),
+            'recover_joint_limits_delay_sec': LaunchConfiguration(
+                'recover_joint_limits_delay_sec'),
         }.items(),
     )
 
@@ -178,9 +182,10 @@ def generate_launch_description():
             'start_drivers', default_value='false',
             description='Also launch the two namespaced NERO drivers.'),
         DeclareLaunchArgument(
-            'start_grippers', default_value='true',
+            'start_grippers', default_value='false',
             description='Also launch both CTAG2F90-D CAN gripper drivers. '
-                        'Set false if they are already running.'),
+                        'Defaults off because the grippers may be disconnected; '
+                        'set true only when both CAN grippers are present.'),
         DeclareLaunchArgument(
             'gripper_allow_motion', default_value='false',
             description='Allow gripper enable/position writes in both the '
@@ -319,6 +324,16 @@ def generate_launch_description():
         DeclareLaunchArgument('can_right', default_value='can_right'),
         DeclareLaunchArgument('speed_percent', default_value='5'),
         DeclareLaunchArgument('auto_enable', default_value='true'),
+        DeclareLaunchArgument(
+            'recover_joint_limits', default_value='false',
+            description=(
+                'Trim joint4 back inside the deployment cap after the drivers '
+                'start; motors stay enabled.'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'recover_joint_limits_delay_sec', default_value='8.0',
+            description='Delay before the joint-limit recovery step.'),
         DeclareLaunchArgument('table_width', default_value='1.80'),
         DeclareLaunchArgument('table_depth', default_value='0.90'),
         DeclareLaunchArgument('table_thickness', default_value='0.03'),

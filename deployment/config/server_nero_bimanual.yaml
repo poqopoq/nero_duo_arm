@@ -1,0 +1,90 @@
+# LeRobot 0.6.2 remote policy server template for the 20-D Xense UMI contract.
+#
+# Copy this file to the GPU host and replace model.repo_or_path before use.
+# action_fps must equal the checkpoint's action rate and the rollout --fps.
+# Use deployment nero-bimanual-14d + axis_angle14 only with a matching checkpoint.
+deployment: nero-bimanual
+model:
+  repo_or_path: /absolute/path/to/nero_bimanual_rot6d_checkpoint
+  revision: null
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  action_fps: 5.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 10.0
+  warmup_calls: 2
+language:
+  enabled: false
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/0.0.0.0:7447]
+semantics: nero-bimanual-tcp-metres-rot6d-gripper-normalized-v1
+robot_type: xtac_umi_g1
+features:
+  - name: observation.state
+    shape: [20]
+    dtype: float32
+    names:
+      - left_tcp.x.pos
+      - left_tcp.y.pos
+      - left_tcp.z.pos
+      - left_tcp.r1.pos
+      - left_tcp.r2.pos
+      - left_tcp.r3.pos
+      - left_tcp.r4.pos
+      - left_tcp.r5.pos
+      - left_tcp.r6.pos
+      - left_gripper.pos
+      - right_tcp.x.pos
+      - right_tcp.y.pos
+      - right_tcp.z.pos
+      - right_tcp.r1.pos
+      - right_tcp.r2.pos
+      - right_tcp.r3.pos
+      - right_tcp.r4.pos
+      - right_tcp.r5.pos
+      - right_tcp.r6.pos
+      - right_gripper.pos
+    semantics: nero-bimanual-tcp-metres-rot6d-gripper-normalized-v1
+  - name: observation.images.camera1
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-side-table-v1
+  - name: observation.images.camera2
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-left-wrist-v1
+  - name: observation.images.camera3
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-right-wrist-v1
+action_feature:
+  name: action
+  shape: [20]
+  dtype: float32
+  names:
+    - left_tcp.x.pos
+    - left_tcp.y.pos
+    - left_tcp.z.pos
+    - left_tcp.r1.pos
+    - left_tcp.r2.pos
+    - left_tcp.r3.pos
+    - left_tcp.r4.pos
+    - left_tcp.r5.pos
+    - left_tcp.r6.pos
+    - left_gripper.pos
+    - right_tcp.x.pos
+    - right_tcp.y.pos
+    - right_tcp.z.pos
+    - right_tcp.r1.pos
+    - right_tcp.r2.pos
+    - right_tcp.r3.pos
+    - right_tcp.r4.pos
+    - right_tcp.r5.pos
+    - right_tcp.r6.pos
+    - right_gripper.pos
+  semantics: nero-bimanual-tcp-metres-rot6d-gripper-normalized-v1

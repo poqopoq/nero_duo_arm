@@ -8,14 +8,12 @@ import unittest
 
 import cv2
 import numpy as np
-import torch
 
-from lerobot.async_inference.configs import RobotClientConfig
-from lerobot.async_inference.robot_client import RobotClient
 from lerobot.robots import RobotConfig, make_robot_from_config
+from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot_robot_nero import Nero, NeroConfig
-from lerobot_robot_nero.nero import STATE_NAMES
+from lerobot_robot_nero.nero import ACTION_NAMES, STATE_NAMES
 from lerobot_robot_nero.protocol import recv_frame, send_frame
 
 
@@ -68,7 +66,14 @@ class MockBridge:
                         self.image_payload,
                     )
                 elif command == 'send_action':
-                    send_frame(conn, {'ok': True, 'action': request['action'], 'executed': False})
+                    accepted = request['action'][0] != -999.0
+                    send_frame(conn, {
+                        'ok': True,
+                        'action': request['action'],
+                        'accepted': accepted,
+                        **({} if accepted else {'error': 'motion fault latched'}),
+                        'executed': False,
+                    })
                 elif command == 'stop':
                     send_frame(conn, {'ok': True, 'stopped': True})
                 else:
@@ -83,7 +88,10 @@ class NeroPluginTest(unittest.TestCase):
     def test_registration_and_features(self) -> None:
         self.assertIs(RobotConfig.get_choice_class('nero_ros'), NeroConfig)
         robot = Nero(NeroConfig(image_width=64, image_height=48))
+        self.assertTrue(robot.supports_position_hold)
+        self.assertEqual(tuple(robot.action_features), ACTION_NAMES)
         self.assertEqual(tuple(robot.action_features), STATE_NAMES)
+        self.assertTrue(all(name.endswith('.pos') for name in robot.action_features))
         self.assertEqual(tuple(robot.observation_features), (*STATE_NAMES, 'camera1'))
         self.assertEqual(robot.observation_features['camera1'], (48, 64, 3))
 
@@ -100,33 +108,46 @@ class NeroPluginTest(unittest.TestCase):
             robot.connect()
             observation = robot.get_observation()
             self.assertEqual(observation['camera1'].shape, (48, 64, 3))
-            self.assertAlmostEqual(observation['ee.x'], 0.1)
-            self.assertAlmostEqual(observation['ee.gripper'], 0.75)
+            self.assertAlmostEqual(observation['ee.x.pos'], 0.1)
+            self.assertAlmostEqual(observation['ee.gripper.pos'], 0.75)
             applied = robot.send_action({name: observation[name] for name in robot.action_features})
-            self.assertAlmostEqual(applied['ee.z'], 0.3)
+            self.assertAlmostEqual(applied['ee.z.pos'], 0.3)
             robot.disconnect()
 
-    def test_robot_client_feature_mapping(self) -> None:
+    def test_position_hold_contract(self) -> None:
         with MockBridge() as bridge:
-            client = RobotClient(
-                RobotClientConfig(
-                    robot=NeroConfig(
-                        bridge_socket=bridge.socket_path,
-                        image_width=64,
-                        image_height=48,
-                        stop_on_disconnect=False,
-                    ),
-                    policy_type='smolvla',
-                    pretrained_name_or_path='test/checkpoint',
-                    actions_per_chunk=10,
-                )
-            )
-            features = client.policy_config.lerobot_features
-            self.assertEqual(features['observation.state']['shape'], (7,))
-            self.assertEqual(features['observation.images.camera1']['shape'], (48, 64, 3))
-            action = client._action_tensor_to_action_dict(torch.arange(7, dtype=torch.float32))
-            self.assertEqual(list(action.values()), [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-            client.robot.disconnect()
+            robot = make_robot_from_config(NeroConfig(
+                bridge_socket=bridge.socket_path,
+                image_width=64,
+                image_height=48,
+                stop_on_disconnect=False,
+            ))
+            wrapper = ThreadSafeRobot(robot)
+            wrapper.configure_position_hold()
+            self.assertTrue(wrapper.supports_hold)
+            robot.connect()
+            observation = wrapper.get_observation()
+            action = {name: observation[name] for name in wrapper.action_features}
+            action['ee.x.pos'] += 0.01
+            applied = wrapper.send_action(action)
+            self.assertAlmostEqual(applied['ee.x.pos'], 0.11)
+            wrapper.hold()
+            robot.disconnect()
+
+    def test_rejected_action_aborts_rollout(self) -> None:
+        with MockBridge() as bridge:
+            robot = Nero(NeroConfig(
+                bridge_socket=bridge.socket_path,
+                image_width=64,
+                image_height=48,
+                stop_on_disconnect=False,
+            ))
+            robot.connect()
+            action = {name: 0.0 for name in robot.action_features}
+            action['ee.x.pos'] = -999.0
+            with self.assertRaisesRegex(RuntimeError, 'motion fault latched'):
+                robot.send_action(action)
+            robot.disconnect()
 
 
 if __name__ == '__main__':

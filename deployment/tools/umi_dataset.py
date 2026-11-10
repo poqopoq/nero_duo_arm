@@ -44,13 +44,13 @@ ACTION_NAMES = (
 )
 
 NERO_ACTION_NAMES = (
-    "ee.x",
-    "ee.y",
-    "ee.z",
-    "ee.rx",
-    "ee.ry",
-    "ee.rz",
-    "ee.gripper",
+    "ee.x.pos",
+    "ee.y.pos",
+    "ee.z.pos",
+    "ee.rx.pos",
+    "ee.ry.pos",
+    "ee.rz.pos",
+    "ee.gripper.pos",
 )
 
 
