@@ -41,7 +41,7 @@ world: 桌面平面、两基座中心中点，+X 指向桌内，+Y 指向左
 left base:  xyz=[0, +0.30, 0], yaw=pi
 right base: xyz=[0, -0.30, 0], yaw=pi
 基座中心距: 0.60 m
-TCP: tool0 沿工具轴 +0.1708 m
+TCP: tool0 沿工具轴 +0.2133 m；夹爪闭合总长 0.265 m
 ```
 
 ## 3. 当前状态
@@ -56,6 +56,8 @@ TCP: tool0 沿工具轴 +0.1708 m
 - 夹爪只读反馈、真实开合、MoveIt `GripperCommand` 小幅往返。
 - 夹爪空载 10×10 位置/速度 `200/200`、低速软件急停 `4/4`。
 - 单臂/双臂 VLA bridge 的 dry-run、IK 干跑和假 action server 测试。
+- 相机外参求解的合成数据测试：固定相机与 eye-in-hand 均通过。
+- 夹爪实物 TCP 枢轴标定工具、开度拟合工具及其单元测试。
 
 仍未验收：
 
@@ -64,10 +66,44 @@ TCP: tool0 沿工具轴 +0.1708 m
 - Web/MoveIt 全链路真机联锁、真实 SmolVLA checkpoint 整链路。
 - 真实物理急停。
 
+## 3.1 标定入口
+
+相机外参：
+
+```bash
+ros2 launch dual_nero_calibration capture.launch.py camera:=right_wrist samples:=20
+ros2 run dual_nero_calibration solve_extrinsics \
+  --camera right_wrist \
+  --session /home/work/nero_duo_arm/deployment/calibration_data/right_wrist/<timestamp> \
+  --strict
+```
+
+夹爪实物 TCP（脚本只读 TF，不控制机械臂）：
+
+```bash
+ros2 run dual_nero_calibration calibrate_gripper_tcp \
+  --side right --samples 12 --strict
+```
+
+夹爪开度（卡尺读数，至少两组）：
+
+```bash
+ros2 run dual_nero_calibration calibrate_gripper_opening \
+  --side right --measurement 0=89.4 --measurement 500=45.1
+```
+
+详细安全和验收步骤见 `docs/02_sensors_and_calibration.md` 与
+`docs/17_gripper_can_diagnostics.md` 第 11、12 节。标定结果只是数据，必须人工
+同步驱动 `tcp_offset` 和 URDF `*_tcp_x/y/z` 后才进入 MoveIt/VLA 链路。
+
 ## 4. 安全状态
 
-- 左右臂当前应位于 `deployment/config/support_pose.yaml` 记录的重力稳定
-  park pose；`joint2` 下限 `-1.760` 是唯一保留的项目放宽项。
+- `deployment/config/support_pose.yaml` 只保存 MoveIt Park 使用的全限位内目标；
+  夹爪安装后的物理停止位允许在失能时超限，上电由 `recover_joint_limits.sh`
+  自动清故障、使能并收回限位。恢复不修改运行时 `speed_percent`，而是以
+  `50 Hz` 发布每步不超过 `0.0015 rad` 的平滑位置序列；常驻 `--watch` 还会在
+  每次电机 `失能 -> 使能` 后重新检查。`joint2` 下限 `-1.760` 是唯一保留的
+  放宽项。
 - `joint4` 上限 `2.14`，`joint6` 范围 `[-0.7330383, 0.8726646]`。
 - 软件急停：`/left/emergency_stop`、`/right/emergency_stop` 加两侧
   `control_enable=false`；没有物理急停。

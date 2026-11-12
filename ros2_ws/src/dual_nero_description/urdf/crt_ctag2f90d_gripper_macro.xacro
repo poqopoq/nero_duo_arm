@@ -13,10 +13,29 @@
     is the maximum allowed closing command (0.9 mm pad opening). Full mechanical
     closure is q=-0.91 rad, but commands stop short to protect the force sensor.
     The four-bar links follow the main joint through <mimic>.
+
+    The deployed tool stack also contains a six-axis force/torque sensor and a
+    connector block between the NERO flange and the gripper mounting face.
+    Their nominal axial thicknesses are 25 mm and 17.5 mm (42.5 mm total).
+    With the original gripper at its closed limit, the resulting flange-to-tip
+    length is 265 mm. The 170.8 mm pinch offset is measured from the gripper
+    mounting face, so the TCP is 213.3 mm from tool0 after the stack is added.
   -->
+
+  <xacro:property name="ctag_ft_sensor_length" value="0.025"/>
+  <xacro:property name="ctag_connector_length" value="0.0175"/>
+  <xacro:property name="ctag_stack_length"
+                  value="${ctag_ft_sensor_length + ctag_connector_length}"/>
+  <xacro:property name="ctag_pinch_offset" value="0.1708"/>
 
   <material name="crt_gripper_grey">
     <color rgba="0.615686274509804 0.63921568627451 0.674509803921569 1.0"/>
+  </material>
+  <material name="crt_sensor_dark_grey">
+    <color rgba="0.18 0.19 0.21 1.0"/>
+  </material>
+  <material name="crt_connector_black">
+    <color rgba="0.08 0.08 0.09 1.0"/>
   </material>
 
   <xacro:macro name="crt_gripper_link"
@@ -48,6 +67,64 @@
     <joint name="${prefix}ctag_mount_joint" type="fixed">
       <xacro:insert_block name="origin"/>
       <parent link="${parent}"/>
+      <child link="${prefix}ctag_ft_sensor_link"/>
+    </joint>
+
+    <!-- Nominal sensor/connector geometry and inertias. Replace the mass and
+         inertia values after weighing the actual sensor and adapter hardware. -->
+    <link name="${prefix}ctag_ft_sensor_link">
+      <inertial>
+        <origin xyz="0 0 ${ctag_ft_sensor_length / 2.0}" rpy="0 0 0"/>
+        <mass value="0.22"/>
+        <inertia ixx="7.88e-05" ixy="0" ixz="0"
+                 iyy="7.88e-05" iyz="0" izz="1.35e-04"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 ${ctag_ft_sensor_length / 2.0}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.0325" length="${ctag_ft_sensor_length}"/>
+        </geometry>
+        <material name="crt_sensor_dark_grey"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${ctag_ft_sensor_length / 2.0}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="0.0325" length="${ctag_ft_sensor_length}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}ctag_ft_sensor_to_connector_joint" type="fixed">
+      <origin xyz="0 0 ${ctag_ft_sensor_length}" rpy="0 0 0"/>
+      <parent link="${prefix}ctag_ft_sensor_link"/>
+      <child link="${prefix}ctag_connector_link"/>
+    </joint>
+
+    <link name="${prefix}ctag_connector_link">
+      <inertial>
+        <origin xyz="0 0 ${ctag_connector_length / 2.0}" rpy="0 0 0"/>
+        <mass value="0.12"/>
+        <inertia ixx="4.53e-05" ixy="0" ixz="0"
+                 iyy="4.53e-05" iyz="0" izz="8.45e-05"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 ${ctag_connector_length / 2.0}" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.065 0.065 ${ctag_connector_length}"/>
+        </geometry>
+        <material name="crt_connector_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${ctag_connector_length / 2.0}" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.065 0.065 ${ctag_connector_length}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}ctag_connector_to_base_joint" type="fixed">
+      <origin xyz="0 0 ${ctag_connector_length}" rpy="0 0 0"/>
+      <parent link="${prefix}ctag_connector_link"/>
       <child link="${prefix}ctag_base_link"/>
     </joint>
 
@@ -140,10 +217,11 @@
       <mimic joint="${prefix}ctag_left_1_joint" multiplier="-1" offset="0"/>
     </joint>
 
-    <!-- Pinch point halfway along the finger pads. -->
+    <!-- Pinch point halfway along the finger pads. The 170.8 mm offset is from
+         the gripper mounting face; expose it from tool0 as 213.3 mm. -->
     <link name="${prefix}ctag_tcp_link"/>
     <joint name="${prefix}ctag_tcp_joint" type="fixed">
-      <origin xyz="0 0 0.1708" rpy="0 0 0"/>
+      <origin xyz="0 0 ${ctag_pinch_offset}" rpy="0 0 0"/>
       <parent link="${prefix}ctag_base_link"/>
       <child link="${prefix}ctag_tcp_link"/>
     </joint>

@@ -79,7 +79,8 @@ def transform_residual(transforms: list[np.ndarray], reference: np.ndarray) -> t
 def write_extrinsic_yaml(path: str | Path, name: str, parent_frame: str,
                          child_frame: str, transform: np.ndarray,
                          samples: int, translation_rms: float,
-                         rotation_rms_deg: float) -> None:
+                         rotation_rms_deg: float, status: str = 'PASS',
+                         failed_checks: Iterable[str] = ()) -> None:
     rotation = Rotation.from_matrix(transform[:3, :3])
     quat = rotation.as_quat()
     rpy = rotation.as_euler('xyz')
@@ -95,6 +96,8 @@ def write_extrinsic_yaml(path: str | Path, name: str, parent_frame: str,
             'translation_rms_m': float(translation_rms),
             'rotation_rms_deg': float(rotation_rms_deg),
             'generated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+            'status': status,
+            'failed_checks': list(failed_checks),
         }
     }
     path = Path(path)

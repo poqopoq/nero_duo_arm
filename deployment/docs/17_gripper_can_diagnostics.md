@@ -336,7 +336,107 @@ ros2 launch dual_nero_moveit_config moveit_execution.launch.py \
   gripper_enable_motor:=true left_gripper_enable_motor:=true
 ```
 
-## 11. 已知限制
+## 11. 实物 TCP 标定
+
+`tcp_offset` 当前默认值来自 URDF 和厂商几何，不等于实物夹爪的最终夹持中心。
+更换夹爪、拆装指爪或发现 `check_tcp_contract.py` 与实际抓取点偏差后，必须做
+枢轴（pivot）标定。
+
+准备：
+
+1. 驱动、`robot_state_publisher` 和 MoveIt/URDF 已启动；
+2. 确认 `world -> <side>_link7` TF 连续可用；
+3. 工作区清空，机械臂低速、有人监护；
+4. 选一个固定枢轴点。枢轴点必须代表最终抓取点：可直接用闭合指爪尖，或在
+   两指之间夹一根刚性指针，并把指针长度从结果中扣除。
+
+确认 TF：
+
+```bash
+ros2 run tf2_ros tf2_echo world right_link7
+```
+
+运行标定（脚本只读 TF，不控制机械臂）：
+
+```bash
+cd /home/work/nero_duo_arm/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 run dual_nero_calibration calibrate_gripper_tcp \
+  --side right --samples 12 --strict
+```
+
+每个位姿保持枢轴点不动，只改变工具姿态；按 Enter 采样。脚本会拒绝与已有姿态
+旋转差小于 `5 deg` 的样本，并要求总旋转跨度至少 `15 deg`。建议至少 8 个位姿，
+覆盖两个以上非平行旋转轴。完成后输出：
+
+```text
+OUTPUT .../deployment/calibration_results/gripper_tcp_right.yaml
+TCP_XYZ_LINK7_M [...]
+DRIVER_TCP_OFFSET [...]
+URDF_ARGS {'right_tcp_x': ..., 'right_tcp_y': ..., 'right_tcp_z': ...}
+PIVOT_RMS_MM 0.8
+CALIBRATION PASS
+```
+
+验收阈值：枢轴 RMS `< 2 mm`，旋转跨度 `>= 15 deg`，条件数 `< 1e5`。
+结果同时给出两组必须同步修改的值：
+
+- 驱动 `dual_nero_drivers.launch.py` 的 `DEFAULT_TCP_OFFSET` /
+  launch 参数 `tcp_offset`；
+- `dual_nero_description/urdf/two_nero_tabletop.urdf.xacro` 的
+  `*_tcp_x/y/z` 默认值（Web 3D 和 MoveIt 使用同一套 URDF）。
+
+修改后重新启动驱动和 MoveIt，并运行：
+
+```bash
+/usr/bin/python3 deployment/scripts/check_tcp_contract.py
+```
+
+只有 `tcp_pose` 与 MoveIt FK 一致且实际抓取点复测通过，才把标定结果用于 VLA
+或自动抓取。左右夹爪分别标定，不要把一侧结果直接复制到另一侧。
+
+## 12. 夹爪开度标定
+
+`/<side>_gripper/width` 默认用线性模型把原始位置 `0..1000` 映射到 `0..90 mm`。
+指爪、垫片或夹持物体改变后，用卡尺在至少两个相距 `100` 计数的位置测量实际
+指腹开口。
+
+先低速移动到目标位置，等待 `/position` 稳定，再用卡尺测量：
+
+```bash
+ros2 topic pub --once /right_gripper/position_cmd std_msgs/msg/Int32 "{data: 250}"
+ros2 topic echo --once /right_gripper/position
+# 卡尺读数，例如 67.2 mm
+```
+
+记录多组 `原始位置=开口毫米`，拟合并生成驱动参数：
+
+```bash
+ros2 run dual_nero_calibration calibrate_gripper_opening \
+  --side right \
+  --measurement 0=89.4 \
+  --measurement 250=67.2 \
+  --measurement 500=45.1 \
+  --measurement 750=22.7
+```
+
+输出 YAML 包含 `opening_min_mm`、`opening_max_mm`、线性斜率和拟合残差。把
+`node_parameters` 中四个值写入该侧夹爪 launch/参数文件：
+
+```text
+position_min
+position_max
+opening_min_mm
+opening_max_mm
+```
+
+拟合 RMS 大于 `1 mm` 时不要直接套用线性模型；先检查指爪是否松动、机械零位
+是否变化，或把工作区间分段标定。开度标定只修正宽度反馈，不改变 CAN 原始
+`0..1000` 位置含义。
+
+## 13. 已知限制
 
 - 位置开环命令 + 位置反馈确认；速度、斜坡和力矩上限使用厂商寄存器；有原始
   电流/温度/故障遥测，但没有校准力值或闭环力控。

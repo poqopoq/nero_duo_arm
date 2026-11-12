@@ -11,18 +11,47 @@ from scipy.spatial.transform import Rotation
 from .common import load_yaml
 
 
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _calibration_status(data: dict) -> str:
+    status = str(data.get('status', 'UNKNOWN')).upper()
+    return status if status in ('PASS', 'WARN') else 'UNKNOWN'
+
+
 class ExtrinsicPublisher(Node):
     def __init__(self):
         super().__init__('camera_extrinsic_publisher')
         self.declare_parameter('yaml_files', '')
+        self.declare_parameter('allow_degraded', False)
         files = [
             value.strip() for value in
             self.get_parameter('yaml_files').value.split(',') if value.strip()
         ]
+        allow_degraded = _truthy(self.get_parameter('allow_degraded').value)
+        loaded = [(path, load_yaml(path)['extrinsic']) for path in files]
+        rejected = []
+        for path, data in loaded:
+            status = _calibration_status(data)
+            if status == 'PASS':
+                continue
+            if allow_degraded:
+                self.get_logger().warn(
+                    f'{path}: calibration status {status}; publishing anyway '
+                    'because allow_degraded:=true')
+                continue
+            rejected.append(f'{path} ({status})')
+        if rejected:
+            raise RuntimeError(
+                'Refusing to publish an extrinsic that failed its quality '
+                f'checks: {", ".join(rejected)}. Re-run solve_extrinsics until '
+                'it reports CALIBRATION PASS, or set allow_degraded:=true.')
         broadcaster = StaticTransformBroadcaster(self)
         transforms = []
-        for path in files:
-            data = load_yaml(path)['extrinsic']
+        for path, data in loaded:
             msg = TransformStamped()
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.header.frame_id = data['parent_frame']

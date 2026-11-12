@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Bring joint4 back inside the deployment cap after power-up.
+# Recover a power-off pose that drifted past joint4/joint7 or another limit.
+# The script clears latched faults, enables the requested sides, ramps back
+# inside the deployment caps with small joint steps, verifies brake release,
+# and leaves the motors enabled with the control gate closed.
 # Usage: ./recover_joint_limits.sh [--dry-run] [--side left|right] [--disable]
+#        ./recover_joint_limits.sh --watch
 set -u
 set +e
 
@@ -20,4 +24,4 @@ source /opt/ros/humble/setup.bash
 source "${WS}/install/setup.bash"
 set -u
 
-exec /usr/bin/python3 "${SCRIPT_DIR}/recover_joint_limits.py" "$@"
+exec /usr/bin/python3 -u "${SCRIPT_DIR}/recover_joint_limits.py" "$@"

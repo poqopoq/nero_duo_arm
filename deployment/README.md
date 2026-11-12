@@ -12,7 +12,7 @@
 - [VLA 链路](docs/05_vla_pipeline.md) — 单臂/双臂 bridge、policy server、client
 - [Web 控制台](docs/11_stage8_webapp.md) — 启动、安全顺序、相机
 - [使用手册与命令速查](docs/12_usage_and_commands.md) — 日常命令入口
-- [夹爪与 ZQWL-CANFD](docs/17_gripper_can_diagnostics.md) — 协议、只读、验收
+- [夹爪与 ZQWL-CANFD](docs/17_gripper_can_diagnostics.md) — 协议、TCP/开度标定、验收
 - [夹爪六维力传感器](docs/18_gripper_ft_sensor.md) — UART 协议、ROS 2 接口
 - [项目交接](PROJECT_HANDOFF.md) — 当前状态、映射、快速复验
 

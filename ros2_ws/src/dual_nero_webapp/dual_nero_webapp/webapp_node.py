@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -220,6 +221,9 @@ class WebappNode(Node):
         self.declare_parameter('moveit_goal_tolerance_rad', 0.01)
         self.declare_parameter('moveit_result_timeout_sec', 120.0)
         self.declare_parameter('moveit_dry_run', True)
+        self.declare_parameter('recover_on_enable', True)
+        self.declare_parameter('joint_limit_recovery_script', '')
+        self.declare_parameter('joint_limit_recovery_timeout_sec', 180.0)
         self.declare_parameter('left_gripper_prefix', '/left_gripper')
         self.declare_parameter('right_gripper_prefix', '/right_gripper')
         self.declare_parameter('allow_gripper_motion', False)
@@ -242,7 +246,7 @@ class WebappNode(Node):
         self.declare_parameter('right_base_yaw', 3.141592653589793)
         self.declare_parameter('include_gripper', True)
         tcp_defaults = {
-            'x': 0.0, 'y': 0.0, 'z': 0.1708,
+            'x': 0.0, 'y': 0.0, 'z': 0.2133,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
         }
         for side in SIDES:
@@ -259,6 +263,13 @@ class WebappNode(Node):
         namespaces = {'left': self.left_ns, 'right': self.right_ns}
         self.allow_gripper_motion = bool(
             self.get_parameter('allow_gripper_motion').value)
+        self.recover_on_enable = bool(
+            self.get_parameter('recover_on_enable').value)
+        self.joint_limit_recovery_script = str(
+            self.get_parameter('joint_limit_recovery_script').value).strip()
+        self.joint_limit_recovery_timeout = max(
+            10.0,
+            float(self.get_parameter('joint_limit_recovery_timeout_sec').value))
         self.gripper_position_min = int(
             self.get_parameter('gripper_position_min').value)
         self.gripper_position_max = int(
@@ -628,6 +639,11 @@ class WebappNode(Node):
             health['joint_count'] = len(msg.status)
             health['motor_faults'] = faults
             health['motor_status_time'] = time.monotonic()
+        if msg.status:
+            if enabled_joints == len(msg.status):
+                self._motor_enabled[side] = True
+            elif enabled_joints == 0:
+                self._motor_enabled[side] = False
 
     def _on_gripper_position(self, side: str, msg: Int32) -> None:
         with self._gripper_lock:
@@ -1444,12 +1460,92 @@ class WebappNode(Node):
         self.get_logger().info(f'{side} control gate {"opened" if enabled else "closed"}')
         return {'ok': True, 'side': side, 'enabled': bool(enabled)}
 
+    def _run_joint_limit_recovery(self, side: str) -> Dict:
+        """Enable and recover the arm before reporting it ready for motion."""
+        script = self.joint_limit_recovery_script
+        if not script:
+            return {
+                'ok': False,
+                'side': side,
+                'error': 'joint-limit recovery script is not configured',
+            }
+        if not Path(script).is_file():
+            return {
+                'ok': False,
+                'side': side,
+                'error': f'joint-limit recovery script not found: {script}',
+            }
+
+        self.get_logger().info(f'{side}: checking joint limits before enable')
+        try:
+            completed = subprocess.run(
+                [script, '--side', side, '--ensure-enabled'],
+                capture_output=True,
+                text=True,
+                timeout=self.joint_limit_recovery_timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                'ok': False,
+                'side': side,
+                'error': 'joint-limit recovery timed out; keep the arm supported',
+            }
+        except OSError as exc:
+            return {
+                'ok': False,
+                'side': side,
+                'error': f'joint-limit recovery could not start: {exc}',
+            }
+
+        lines = [
+            line for line in
+            (completed.stdout + '\n' + completed.stderr).splitlines()
+            if line.strip()
+        ]
+        output = '\n'.join(lines[-20:])
+        if completed.returncode == 0:
+            message = (
+                f'{side} motors enabled and joint limits checked; '
+                'control gate remains closed')
+            self.get_logger().info(message)
+            return {
+                'ok': True,
+                'side': side,
+                'enabled': True,
+                'gate': False,
+                'message': message,
+                'recovery_output': output,
+            }
+
+        detail = next(
+            (line for line in reversed(lines) if line.startswith(('FAILED:', 'REFUSED:'))),
+            lines[-1] if lines else f'recovery exited with code {completed.returncode}',
+        )
+        self.get_logger().error(
+            f'{side}: joint-limit recovery failed: {detail}')
+        return {
+            'ok': False,
+            'side': side,
+            'enabled': None,
+            'gate': False,
+            'error': detail,
+            'recovery_output': output,
+        }
+
     def set_enabled(self, side: str, enabled: bool, timeout: float = 8.0) -> Dict:
         if side not in SIDES:
             return {'ok': False, 'error': f'unknown side: {side}'}
         if not enabled:
             self._motor_enabled[side] = False
             self._cancel_active_motion(side)
+        elif self.recover_on_enable and self.joint_limit_recovery_script:
+            gate_result = self.set_gate(side, False)
+            if not gate_result.get('ok'):
+                return gate_result
+            result = self._run_joint_limit_recovery(side)
+            self._motor_enabled[side] = True if result.get('ok') else None
+            return result
         client = self._get_service_client(side, 'enable')
         if not client.wait_for_service(timeout_sec=1.0):
             namespace = self._namespace_for(side)
@@ -1540,6 +1636,13 @@ class WebappNode(Node):
             }
         if self._motion_lock.locked():
             return {'ok': False, 'error': 'refusing recovery while a motion is active'}
+        if self.recover_on_enable and self.joint_limit_recovery_script:
+            gate_result = self.set_gate(side, False)
+            if not gate_result.get('ok'):
+                return gate_result
+            result = self._run_joint_limit_recovery(side)
+            self._motor_enabled[side] = True if result.get('ok') else None
+            return result
         feedback_age = time.monotonic() - self._feedback_time[side]
         if self._feedback_time[side] <= 0.0 or feedback_age > 2.0:
             return {

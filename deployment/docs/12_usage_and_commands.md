@@ -125,6 +125,12 @@ ros2 launch dual_nero_webapp webapp.launch.py \
   trajectory_settle_timeout_sec:=1.0 trajectory_settle_tolerance_rad:=0.01 \
   gripper_allow_motion:=true gripper_enable_motor:=true
 ```
+
+如果刚断电重启、失能停止位又落到了 `joint4`/`joint7` 限位外，可以直接用上面
+的 `speed_percent:=100` 启动。恢复脚本不会调用运行时调速：它以 `50 Hz` 发布
+每步不超过 `0.0015 rad` 的平滑位置序列，因此 `100%` 启动也能安全归位，驱动
+也不会因参数回调退出。
+
 ### 2.3 分终端启动
 
 驱动：
@@ -134,31 +140,41 @@ ros2 launch dual_nero_webapp webapp.launch.py \
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=5 auto_enable:=false \
-  tcp_offset:='[0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 
-# 真机运动：40% 速度并自动使能
+# 真机运动：上电自动使能；恢复使用小步位置序列，不修改 speed_percent
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=40 auto_enable:=true \
   recover_joint_limits:=true recover_joint_limits_delay_sec:=8.0 \
-  tcp_offset:='[0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 ```
 
 `tcp_offset` 默认已是 CTAG2F90D 捏合点；显式写出是为了和部署记录对齐。
 更换夹爪或修改 `*_tcp_z` 后必须同步调整，否则驱动 `tcp_pose` 与 MoveIt
 `*_tcp_link` 不一致，IK 会选到错误分支。
 
-上电后如果 `joint4` 接近 `2.19--2.20 rad`，先做只读检查和局部归位：
+上电后如果 `joint4` 接近 `2.19--2.20 rad`，或夹爪使左臂 `joint7` 越过
+`1.5707963`，先做只读检查和局部归位。物理停止位可以超限；`support_pose.yaml`
+只保存 MoveIt Park 使用的限位内目标，不要把失能停止位写进去：
 
 ```bash
 cd /home/work/nero_duo_arm
 ./deployment/scripts/recover_joint_limits.sh --dry-run
-./deployment/scripts/recover_joint_limits.sh --target 2.115 --cap-margin 0.03
+./deployment/scripts/recover_joint_limits.sh
 ```
 
-该脚本只调整 `joint4`，结束后关闭控制门但保持电机使能；不要顺手失能，否则
-右臂会被重力拉回限位。夹爪未连接时保持 `start_grippers:=false`，VLA bridge
-保持 `gripper_enabled:=false`。
+该脚本默认把 `joint4`/`joint7` 收回 `2.115`/`1.545`，并把其它轻微超限关节
+收回到边界内。它会先关闭控制门、清除关节故障、复位运动控制器、使能并核对
+7 个电机状态，再发布低速目标；结束后关闭控制门但保持电机使能，不要顺手失能，
+否则重力会再次把关节拉回物理停止位。恢复运动不修改驱动 `speed_percent`，
+而是以 `50 Hz` 发布每步不超过 `0.0015 rad` 的平滑位置序列，因此 `100%`
+启动也可安全恢复。使能和开门后脚本会重新读取反馈再规划，避免刹车释放后的
+下沉被旧位置拉回。驱动 launch 默认启动常驻 `--watch`：上电检查一次，并在
+每次电机 `失能 -> 使能` 后再次检查恢复；也可用 `--side left|right` 手动
+恢复单侧。自动归位前仍必须清空工作区并有人监护。
+夹爪未连接时保持
+`start_grippers:=false`，VLA bridge 保持 `gripper_enabled:=false`。
 
 相机：
 
@@ -195,7 +211,7 @@ ros2 launch dual_nero_webapp webapp.launch.py
 | `moveit_dry_run` | `true` | `false` 才控制真机 |
 | `auto_enable` | `true` | 启动时使能电机；首次调试设为 `false` |
 | `speed_percent` | `5` | NERO 速度百分比 |
-| `recover_joint_limits` | `false` | 驱动启动后执行 joint4 局部归位并保持使能 |
+| `recover_joint_limits` | `true` | 上电后清故障、使能并把 joint4/joint7 等超限关节收回限位 |
 | `recover_joint_limits_delay_sec` | `8.0` | 等待反馈后再执行归位 |
 | `start_grippers` | `false` | 是否启动夹爪 CAN 驱动；未连接夹爪时保持关闭 |
 | `moveit_velocity_scaling` | `0.05` | MoveIt 速度缩放 |
@@ -410,6 +426,114 @@ Depth 默认关闭；需要时加 `enable_scene_depth:=true` 或
 `enable_wrist_depth:=true`，并单独复测帧率。安装、USB 和标定命令见
 `02_sensors_and_calibration.md`。
 
+标定前一键确认设备，再按 `02` 的步骤采集和求解：
+
+标定板为 `12×9`、方格 `15 mm`。先确认 `12×9` 指方格数还是 OpenCV 内角点：
+前者配置 `pattern_cols: 11` / `pattern_rows: 8`，后者配置 `12` / `9`；
+`square_length_m` 始终为 `0.015`。详见 `02_sensors_and_calibration.md` 第 5 节。
+
+```bash
+rs-enumerate-devices -s
+ros2 topic hz /camera_scene/color/image_raw
+ros2 topic hz /camera_left_wrist/color/image_raw
+ros2 topic hz /camera_right_wrist/color/image_raw
+
+ros2 launch dual_nero_calibration capture.launch.py \
+  camera:=right_wrist samples:=20
+ros2 run dual_nero_calibration solve_extrinsics \
+  --camera right_wrist \
+  --session /home/work/nero_duo_arm/deployment/calibration_data/right_wrist/<timestamp> \
+  --strict
+```
+
+也可以先录 bag 再离线自动选帧；bag 必须包含图像、CameraInfo、`/tf`：
+
+```bash
+ros2 bag record -o right_wrist_calib \
+  /camera_right_wrist/color/image_raw \
+  /camera_right_wrist/color/camera_info \
+  /tf /tf_static
+ros2 run dual_nero_calibration extract_from_bag \
+  --camera right_wrist --bag /home/work/right_wrist_calib \
+  --samples 20 --strict
+```
+
+普通 mp4 没有机器人 TF，不能做腕部手眼标定。详见
+`02_sensors_and_calibration.md` 第 8.1.1 节。
+
+手动逐帧采集：每次调好并停稳机械臂，在终端按 Enter 记录一帧：
+
+```bash
+ros2 run dual_nero_calibration capture_manual \
+  --camera right_wrist --samples 20
+```
+
+`s` 查看状态，`d` 删除上一帧，`q` 结束。也可从另一终端触发：
+
+```bash
+ros2 service call /capture_manual/capture std_srvs/srv/Trigger
+```
+
+它默认要求最近 0.3 s 内平移 `< 1 mm`、旋转 `< 0.2 deg`，并执行与自动采集
+相同的角点质量门限。详见 `02_sensors_and_calibration.md` 第 8.1.2 节。
+
+与已有样本旋转 `< 3 deg` 且平移 `< 10 mm` 的近似位姿会被拒绝，状态行里的
+`spread=NN.Ndeg` 是当前最大姿态夹角；需要保留近似位姿用
+`--allow-near-duplicate`。
+
+自动挑位姿并走点（先不加 `--execute` 只规划、不动机械臂）：
+
+```bash
+ros2 run dual_nero_calibration capture_auto \
+  --camera right_wrist --samples 20
+ros2 run dual_nero_calibration capture_auto \
+  --camera right_wrist --samples 20 --execute
+```
+
+运动走 `/dual_arm_controller/follow_joint_trajectory`，默认 `0.35 rad/s`、
+单步关节增量 `<= 22 deg`，需要现场监护。每个样本会存 `sample_XXXX.npz`、
+`sample_XXXX.png` 和标注角点的 `sample_XXXX_detected.png`。详见
+`02_sensors_and_calibration.md` 第 8.1.3 节。
+
+采集脚本默认逐帧要求相邻角点间距 `>= 2 px`、重投影 RMS `<= 1.0 px`；
+日志出现 `board rejected` 时把标定板移近并改善光照。旧批次若出现
+`REPROJECTION_RMS_PX` 明显大于 1、`TRANSLATION_RMS_M` 达厘米级，说明角点
+数据已损坏，必须整批重采，不能靠放宽 `--max-*` 阈值通过。
+
+若重投影 RMS 很小（< 0.5 px）但一致性卡在几毫米 / 约 1 度，加 `--report`
+看逐帧残差；`ratio = 平移残差 / (旋转残差 x 板距)` 中位数约为 1 表示这是
+跨姿态的姿态误差，属于机械臂零点/绝对精度或相机支架柔性，继续调检测参数
+没有意义。判别流程见 `02_sensors_and_calibration.md` 第 8.2 节。
+
+多采几批再筛一致帧：每批建议 30–40 帧，采 2–3 批，批次间不要碰相机和标定板。
+`--robust` 找最大自洽子集，不会放宽验收阈值：
+
+```bash
+ros2 run dual_nero_calibration solve_extrinsics \
+  --camera right_wrist \
+  --session /home/work/nero_duo_arm/deployment/calibration_data/right_wrist/<session_a> \
+  --robust --report --strict
+
+ros2 run dual_nero_calibration solve_extrinsics \
+  --camera right_wrist \
+  --session /home/work/nero_duo_arm/deployment/calibration_data/right_wrist/<session_b> \
+  --robust --compare /home/work/nero_duo_arm/deployment/calibration_data/right_wrist/<session_a> \
+  --strict
+```
+
+验收看 `INLIERS`（建议 `>= 60%`）、`INLIER_SPREAD_DEG`（`>= 30 deg`）、
+`COMPETING_FRAMES`（应为 0）和跨批差异（`<= 3 mm` / `0.3 deg`）。出现
+`no consistent subset`，或两批差异仍与单批残差同量级，说明外参不可重复，
+应检查相机支架和机械臂绝对精度，而不是继续筛帧。详见
+`02_sensors_and_calibration.md` 第 8.2.1 节。
+
+求解未通过时结果写到 `<camera>_extrinsic.<session>.warn.yaml`，不会覆盖已发布外参；
+`publish_extrinsic` 默认拒绝发布非 `PASS` 的结果，临时覆盖用
+`allow_degraded:=true`。
+
+场景相机还需要先把实测的 `board_pose_in_world` 写入
+`config/calibration_targets.yaml`；三路相机没有全部在线时不要继续发布旧外参。
+
 ## 7. Park 与复位
 
 上电后先执行上文的 `recover_joint_limits.sh`，再进入整体复位/Park；两者不要
@@ -464,6 +588,28 @@ cd /home/work/nero_duo_arm
 ./deployment/scripts/test_gripper_sweep.sh --sides both
 ./deployment/scripts/test_gripper_estop.sh --sides both --speed 10 --trigger-travel 40
 ```
+
+夹爪实物 TCP 与开度标定：
+
+```bash
+cd /home/work/nero_duo_arm/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+# 只读 TF；机械臂由人工/MoveIt 低速移动，枢轴点保持不动
+ros2 run dual_nero_calibration calibrate_gripper_tcp \
+  --side right --samples 12 --strict
+
+# 卡尺测得至少两组 RAW_POSITION=OPENING_MM
+ros2 run dual_nero_calibration calibrate_gripper_opening \
+  --side right \
+  --measurement 0=89.4 --measurement 250=67.2 \
+  --measurement 500=45.1 --measurement 750=22.7
+```
+
+TCP 结果必须同步到驱动 `tcp_offset` 和 URDF `*_tcp_x/y/z`，否则驱动
+`tcp_pose`、MoveIt `*_tcp_link` 和 VLA 动作坐标会互相不一致。详见
+`17_gripper_can_diagnostics.md` 第 11、12 节。
 
 夹爪六维力传感器：
 

@@ -23,6 +23,11 @@ from .common import (
     load_yaml,
     transform_from_msg,
 )
+from .board_quality import (
+    DetectionError,
+    detect_chessboard,
+    reprojection_rms,
+)
 
 
 class CharucoCapture(Node):
@@ -36,6 +41,8 @@ class CharucoCapture(Node):
         self.declare_parameter('min_tool_motion_m', 0.02)
         self.declare_parameter('min_tool_rotation_deg', 2.0)
         self.declare_parameter('max_seconds', 180.0)
+        self.declare_parameter('max_reprojection_rms_px', 1.0)
+        self.declare_parameter('min_corner_gap_px', 2.0)
 
         self.camera = self.get_parameter('camera').value
         self.requested_samples = int(self.get_parameter('samples').value)
@@ -49,6 +56,10 @@ class CharucoCapture(Node):
         self.min_tool_motion = float(self.get_parameter('min_tool_motion_m').value)
         self.min_tool_rotation = float(self.get_parameter('min_tool_rotation_deg').value)
         self.max_seconds = float(self.get_parameter('max_seconds').value)
+        self.max_reprojection_rms = float(
+            self.get_parameter('max_reprojection_rms_px').value)
+        self.min_corner_gap = float(
+            self.get_parameter('min_corner_gap_px').value)
 
         share = Path(get_package_share_directory('dual_nero_calibration'))
         targets = load_yaml(share / 'config' / 'calibration_targets.yaml')['cameras']
@@ -103,6 +114,8 @@ class CharucoCapture(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.last_capture = 0.0
         self.last_tool_pose = None
+        self.last_reject_log = 0.0
+        self.last_rejection_reason = ''
         self.sample_count = 0
         self.started = time.monotonic()
         self.done = False
@@ -156,34 +169,29 @@ class CharucoCapture(Node):
             np.degrees(rotation) >= self.min_tool_rotation
         )
 
+    def _reject_detection(self, reason: str) -> None:
+        self.last_rejection_reason = reason
+        now = time.monotonic()
+        if now - self.last_reject_log >= 2.0:
+            self.get_logger().warn(f'board rejected: {reason}')
+            self.last_reject_log = now
+
     def _detect_board(self, gray, K, D):
         if self.board_type == 'chessboard':
-            flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
-            ok, corners = cv2.findChessboardCornersSB(
-                gray, self.pattern_size, flags=flags)
-            if not ok:
-                flags = (cv2.CALIB_CB_ADAPTIVE_THRESH |
-                         cv2.CALIB_CB_NORMALIZE_IMAGE)
-                ok, corners = cv2.findChessboardCorners(
-                    gray, self.pattern_size, flags=flags)
-            if not ok or corners is None:
-                return None
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-                        50, 0.001)
-            corners = cv2.cornerSubPix(
-                gray, corners, (11, 11), (-1, -1), criteria)
-            image_points = corners.reshape(-1, 2)
-            object_points = self.chessboard_object_points
-            ok, rvec, tvec = cv2.solvePnP(
-                object_points, image_points, K, D,
-                flags=cv2.SOLVEPNP_ITERATIVE)
-            if not ok:
-                return None
             try:
-                rvec, tvec = cv2.solvePnPRefineLM(
-                    object_points, image_points, K, D, rvec, tvec)
-            except Exception:
-                pass
+                detection = detect_chessboard(
+                    gray, self.pattern_size, self.chessboard_object_points,
+                    K, D, min_corner_gap_px=self.min_corner_gap,
+                    max_reprojection_rms_px=self.max_reprojection_rms)
+            except DetectionError as exc:
+                self._reject_detection(str(exc))
+                return None
+            return (
+                detection.object_points,
+                detection.image_points,
+                detection.T_cam_board,
+                detection.reprojection_rms_px,
+            )
         else:
             corners, ids, _ = cv2.aruco.detectMarkers(gray, self.dictionary)
             if ids is None or len(ids) == 0:
@@ -202,11 +210,22 @@ class CharucoCapture(Node):
             object_points = board_corners[ids_flat]
             image_points = charuco_corners.reshape(-1, 2)
 
+        try:
+            rms = reprojection_rms(object_points, image_points, K, D)
+        except RuntimeError:
+            self._reject_detection('solvePnP failed')
+            return None
+        if not np.isfinite(rms) or rms > self.max_reprojection_rms:
+            self._reject_detection(
+                f'reprojection RMS {rms:.3f} px > '
+                f'{self.max_reprojection_rms:.3f} px')
+            return None
+
         R_cam_board = Rotation.from_rotvec(rvec.reshape(3)).as_matrix()
         T_cam_board = np.eye(4)
         T_cam_board[:3, :3] = R_cam_board
         T_cam_board[:3, 3] = tvec.reshape(3)
-        return object_points, image_points, T_cam_board
+        return object_points, image_points, T_cam_board, rms
 
     def _image_cb(self, msg: Image) -> None:
         if self.done or self.camera_info is None:
@@ -226,7 +245,7 @@ class CharucoCapture(Node):
         detected = self._detect_board(gray, K, D)
         if detected is None:
             return
-        object_points, image_points, T_cam_board = detected
+        object_points, image_points, T_cam_board, reprojection = detected
 
         tool_pose = self._tool_pose()
         if tool_pose is None:
@@ -251,6 +270,7 @@ class CharucoCapture(Node):
             T_cam_board=T_cam_board,
             T_base_tool=tool_pose,
             T_camera_link_optical=camera_link_optical,
+            reprojection_rms_px=reprojection,
             stamp_sec=int(msg.header.stamp.sec),
             stamp_nanosec=int(msg.header.stamp.nanosec),
         )
@@ -259,7 +279,8 @@ class CharucoCapture(Node):
         self.last_capture = now
         self.last_tool_pose = tool_pose.copy()
         self.get_logger().info(
-            f'captured {self.sample_count}/{self.requested_samples}: {sample_path.name}')
+            f'captured {self.sample_count}/{self.requested_samples}: '
+            f'{sample_path.name} reprojection={reprojection:.3f} px')
         if self.sample_count >= self.requested_samples:
             self._finish()
 

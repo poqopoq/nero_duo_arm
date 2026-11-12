@@ -59,7 +59,8 @@ table front edge: world.x = -0.06 m
 left base:  xyz = [0, +0.30, 0], yaw = pi
 right base: xyz = [0, -0.30, 0], yaw = pi
 基座中心距: 0.60 m
-TCP: tool0 沿工具轴 +0.1708 m，到 CTAG2F90D 两指夹持中心
+TCP: tool0 沿工具轴 +0.2133 m，到 CTAG2F90D 两指夹持中心
+夹爪总长: 闭合状态 tool0 到指尖 0.265 m（含 25 mm 力传感器 + 17.5 mm 连接块）
 ```
 
 模型检查：

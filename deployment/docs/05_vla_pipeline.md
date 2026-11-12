@@ -89,7 +89,7 @@ source install/setup.bash
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=5 auto_enable:=true \
-  tcp_offset:='[0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 
 ros2 launch dual_nero_cameras all_cameras.launch.py
 
@@ -104,7 +104,7 @@ ros2 launch dual_nero_moveit_config moveit_execution.launch.py \
 不是夹爪 TCP。双臂 launch 文件现在默认传入 CTAG2F90D 夹爪捏合点：
 
 ```text
-link7 -> tcp_link = [0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
+link7 -> tcp_link = [0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
 ```
 
 该值与 `two_nero_tabletop.urdf.xacro` 中 `link7 -> tool0 -> tcp_link` 的合成
@@ -121,24 +121,28 @@ link7 -> tcp_link = [0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
 bridge 默认把左侧 TCP 数值解释为 `left_base_link` 下，右侧解释为
 `right_base_link` 下。若话题 `frame_id` 非空且不匹配，bridge 拒绝该侧反馈。
 
-### 4.2 上电 joint4 归位
+### 4.2 上电 J4/J7 归位
 
-上电后 `joint4` 可能仍在机械限位附近（约 `2.19--2.20 rad`），超过部署上限
-`2.14`，MoveIt IK 会因此拒绝目标。先只读检查，再执行一次带保护的局部归位：
+上电后 `joint4` 可能仍在机械限位附近（约 `2.19--2.20 rad`）；安装夹爪后左臂
+`joint7` 也可能越过 `1.5707963` 上限。两者都会让 MoveIt 拒绝目标。先只读检查，
+再执行一次带保护的局部归位：
 
 ```bash
 cd /home/work/nero_duo_arm
 ./deployment/scripts/recover_joint_limits.sh --dry-run
-./deployment/scripts/recover_joint_limits.sh \
-  --target 2.115 --cap-margin 0.03
+./deployment/scripts/recover_joint_limits.sh
 ```
 
-脚本只修改 `joint4`，其余 6 个关节必须保持在限位和允许漂移内；反馈缺失、其它
-关节超限或修正量超过 `--max-correction` 时直接拒绝。运动使用 5% 驱动速度，
-结束后关闭 `/control_enable`，但**保持电机使能**，避免右臂被重力重新拉回
-`joint4≈2.198`。归位过程完全不访问夹爪。
+脚本默认把 `joint4`/`joint7` 收到 `2.115`/`1.545`，并把其它轻微超限关节
+收回到边界内；修正量超过上限时拒绝。它先关闭控制门，调用
+`clear_joint_error` 和 `reset_motion`，再使能并核对 7 个电机状态。运动速度
+高于 `10%` 时脚本会临时降到 `5%`，归位后恢复原速度；旧驱动不支持运行时
+调速时则拒绝移动。使能和开门后它会重新读取反馈再规划，不能用上电前的位置
+覆盖刹车释放后的实际姿态。结束后关闭 `/control_enable`，但
+**保持电机使能**，避免重力再次把关节拉回物理停止位。失能停止位可以超限，
+但不能写进 `support_pose.yaml`。归位过程不访问夹爪。
 
-也可以在驱动 launch 中自动执行（延迟 `8 s` 等待反馈）：
+驱动 launch 默认在上电后自动执行（延迟 `8 s` 等待反馈）：
 
 ```bash
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
@@ -695,7 +699,7 @@ watchdog 锁存、IK 失败、关节单步超限、14 关节单 goal、14-D axis
 `dual_nero_drivers.launch.py` 现在默认：
 
 ```text
-tcp_offset = [0.2018, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
+tcp_offset = [0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
 ```
 
 实测 `check_tcp_contract.py`：
@@ -705,12 +709,13 @@ left : position_error=0.016 mm rotation_error=0.00003 rad OK
 right: position_error=0.013 mm rotation_error=0.00002 rad OK
 ```
 
-### 11.2 joint4 与使能保持
+### 11.2 joint4/joint7 与使能保持
 
 两侧 `joint4` 曾为 `2.1956/2.1981`，超出部署限幅 `2.14`，IK 会被拒绝。
-用 5% 速度、整组 7 关节命令移到 `2.12` 后 IK 恢复。注意：右臂在失能后会被
-重力带回 `joint4≈2.198`，因此复位后必须**保持电机使能**，只关闭
-`/control_enable` 门。重新失能前必须重新做 joint4 归位。
+用 5% 速度、整组 7 关节命令移到 `2.12` 后 IK 恢复。注意：旧支撑位下右臂失能
+后会被重力带回 `joint4≈2.198`；增加夹爪后左臂失能还会把 `joint7` 带到 URDF
+上限外。因此复位后必须**保持电机使能**，只关闭 `/control_enable` 门，并让
+归位脚本同时回收 `joint4`/`joint7`。重新失能前必须重新执行归位。
 
 ### 11.3 remote inference 实测
 

@@ -103,10 +103,14 @@ shows `brake stuck`.
 
 **Clear faults** sends the NERO joint-driver fault-clear command. It does not
 reset the motion controller, release brakes, enable motors, or move the arm.
-**Recover arm** is intentionally guarded: the control gate must be closed and
-feedback fresh, and the browser asks for confirmation that the arm is
-physically supported. It then resets the motion controller, clears joint
-faults, and re-enables motors. It does not send the arm to Park.
+**Recover arm** and **Enable motors** are intentionally guarded: the control
+gate must be closed and feedback fresh, and the browser asks for confirmation
+that the arm is physically supported. Both run
+`deployment/scripts/recover_joint_limits.sh --side <side> --ensure-enabled`,
+which enables the motors, clearing latched faults first when needed, and ramps
+`joint4`/`joint7` back inside the deployment caps with small position steps
+when needed. The control gate stays closed afterwards; this is not a Park
+command.
 
 Each gripper panel provides **Open**, **Close**, arbitrary-position
 **Apply grip**, a speed percentage, and **Clear obstruction**. Open/Close/Apply
@@ -165,7 +169,7 @@ Override any topic with a ROS parameter (for example
 | `/api/enable` | Enable or disable one arm's motors |
 | `/api/gripper` | Gripper position, speed, enable, and obstruction recovery |
 | `/api/clear_faults` | Send the NERO joint fault-clear command for one arm |
-| `/api/recover` | Reset motion state, clear faults, and re-enable one arm |
+| `/api/recover` | Clear faults, enable, and recover one arm inside J4/J7 limits |
 | `/api/move` | Plan and execute one arm or both arms through MoveIt |
 | `/api/cancel_motion` | Request cancellation of the active MoveIt motion |
 | `/api/cameras` | Per-stream frame statistics |

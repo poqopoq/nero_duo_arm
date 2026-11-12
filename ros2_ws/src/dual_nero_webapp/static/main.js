@@ -814,6 +814,7 @@ async function toggleMotors(side) {
     return;
   }
   state.enabled = Boolean(result.enabled);
+  if (typeof result.gate === 'boolean') state.gate = result.gate;
   updateSafetyUi(side);
   showToast(`${side}: motors ${state.enabled ? 'enabled' : 'disabled'}`,
     state.enabled ? 'ok' : '');
@@ -956,9 +957,10 @@ async function recoverArm(side) {
   }
   const confirmed = window.confirm(
     `Recover the ${side} arm?\n\n`
-    + 'This will reset the motion controller, clear latched joint faults, and '
-    + 'RE-ENABLE the motors. Enabling applies torque and may move the arm '
-    + 'suddenly.\n\n'
+    + 'This will reset the motion controller, clear latched joint faults, '
+    + 're-enable the motors, and move joint4/joint7 back inside their limits '
+    + 'when needed. Enabling applies torque and the recovery move may start '
+    + 'immediately.\n\n'
     + 'The arm must be physically supported, the gate must be closed, and the '
     + 'workspace must be clear. This does not send the arm to Park.\n\n'
     + 'This does not recover a gripper fault. Use Clear obstruction on the '
@@ -982,6 +984,8 @@ async function recoverArm(side) {
     return;
   }
   state.enabled = true;
+  if (typeof result.gate === 'boolean') state.gate = result.gate;
+  else state.gate = false;
   updateSafetyUi(side);
   showToast(`${side}: ${result.message || 'arm recovered and motors enabled'}`, 'ok');
 }

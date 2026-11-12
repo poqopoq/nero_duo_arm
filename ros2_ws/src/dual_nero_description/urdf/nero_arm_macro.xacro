@@ -257,7 +257,7 @@
 
     <xacro:if value="${include_gripper}">
       <xacro:crt_ctag2f90d_gripper prefix="${prefix}" parent="${prefix}link7">
-        <origin xyz="0.031 0 -0.0235" rpy="-1.5708 0 -1.5708"/>
+        <origin xyz="0.031 0 -0.0235" rpy="3.1415927 -1.5707963 0"/>
       </xacro:crt_ctag2f90d_gripper>
     </xacro:if>
 

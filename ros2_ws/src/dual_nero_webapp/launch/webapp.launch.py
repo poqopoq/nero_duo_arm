@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -7,6 +8,29 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+
+def _resolve_recover_script() -> Path:
+    """Find the recovery wrapper in both the source and installed layouts."""
+    override = os.environ.get('NERO_RECOVER_JOINT_LIMITS_SCRIPT')
+    if override:
+        path = Path(override).expanduser()
+        if not path.is_file():
+            raise RuntimeError(
+                f'NERO_RECOVER_JOINT_LIMITS_SCRIPT does not exist: {path}')
+        return path
+    launch_file = Path(__file__).resolve()
+    for ancestor in launch_file.parents:
+        candidate = (
+            ancestor / 'deployment' / 'scripts' / 'recover_joint_limits.sh')
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(
+        'recover_joint_limits.sh not found under any parent of '
+        f'{launch_file}; set NERO_RECOVER_JOINT_LIMITS_SCRIPT to override')
+
+
+RECOVER_SCRIPT = _resolve_recover_script()
 
 
 def generate_launch_description():
@@ -73,6 +97,9 @@ def generate_launch_description():
             'trajectory_clear_cancel_service': LaunchConfiguration(
                 'trajectory_clear_cancel_service'),
             'moveit_dry_run': moveit_dry_run,
+            'recover_on_enable': LaunchConfiguration('recover_joint_limits'),
+            'joint_limit_recovery_script': str(RECOVER_SCRIPT),
+            'joint_limit_recovery_timeout_sec': 180.0,
             'moveit_velocity_scaling': moveit_velocity_scaling,
             'moveit_acceleration_scaling': moveit_acceleration_scaling,
             'table_width': LaunchConfiguration('table_width'),
@@ -325,10 +352,10 @@ def generate_launch_description():
         DeclareLaunchArgument('speed_percent', default_value='5'),
         DeclareLaunchArgument('auto_enable', default_value='true'),
         DeclareLaunchArgument(
-            'recover_joint_limits', default_value='false',
+            'recover_joint_limits', default_value='true',
             description=(
-                'Trim joint4 back inside the deployment cap after the drivers '
-                'start; motors stay enabled.'
+                'Clear latched faults and trim joint4/joint7 back inside the '
+                'deployment caps after the drivers start; motors stay enabled.'
             ),
         ),
         DeclareLaunchArgument(

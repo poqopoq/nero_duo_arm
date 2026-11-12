@@ -9,8 +9,15 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 SIDES = ('left', 'right')
-J4_INDEX = 3
-J4_MAX = 2.14
+JOINT_LIMITS = (
+    (-2.705260, 2.705260),
+    (-1.760000, 1.740000),
+    (-2.750000, 2.750000),
+    (-1.010000, 2.140000),
+    (-2.750000, 2.750000),
+    (-0.7330383, 0.8726646),
+    (-1.5707963, 1.5707963),
+)
 ROOT = Path(os.environ.get('NERO_DUO_ROOT', Path(__file__).resolve().parents[2]))
 OUTPUT = ROOT / 'deployment' / 'config' / 'support_pose.yaml'
 
@@ -47,17 +54,20 @@ if not node.ready():
 
 captured = {side: list(node.values[side]) for side in SIDES}
 for side in SIDES:
-    if captured[side][J4_INDEX] > J4_MAX:
-        print(
-            f'{side} joint4 feedback {captured[side][J4_INDEX]:.9f} exceeds '
-            f'{J4_MAX:.2f}; clamping for the support pose')
-        captured[side][J4_INDEX] = J4_MAX
+    for index, (low, high) in enumerate(JOINT_LIMITS):
+        value = captured[side][index]
+        clamped = min(max(value, low), high)
+        if clamped != value:
+            print(
+                f'{side} joint{index + 1} feedback {value:.9f} exceeds '
+                f'[{low:.7f}, {high:.7f}]; clamping for the support pose')
+            captured[side][index] = clamped
 
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 with OUTPUT.open('w', encoding='utf-8') as f:
     f.write('# Canonical support pose captured from the live NERO joint feedback.\n')
-    f.write('# Joint 4 uses the deployment cap of 2.14 rad'
-            ' (native upper bound: 2.146755).\n')
+    f.write('# Values outside the deployment joint limits are clamped; validate'
+            ' the result with MoveIt before use.\n')
     f.write('support_pose:\n')
     for side in SIDES:
         for idx, value in enumerate(captured[side], start=1):

@@ -60,40 +60,40 @@
 
 
   <group_state group="left_arm" name="support">
-    <joint name="left_joint1" value="-1.574653504"/>
-    <joint name="left_joint2" value="-1.757092771"/>
-    <joint name="left_joint3" value="-0.045413467"/>
-    <joint name="left_joint4" value="2.14"/>
-    <joint name="left_joint5" value="-0.013561208"/>
-    <joint name="left_joint6" value="-0.009267698"/>
-    <joint name="left_joint7" value="0.122714100"/>
+    <joint name="left_joint1" value="-1.579034281"/>
+    <joint name="left_joint2" value="-1.757145131"/>
+    <joint name="left_joint3" value="-0.034435346"/>
+    <joint name="left_joint4" value="2.115"/>
+    <joint name="left_joint5" value="-0.029373891"/>
+    <joint name="left_joint6" value="-0.003665191"/>
+    <joint name="left_joint7" value="1.545"/>
   </group_state>
 
   <group_state group="right_arm" name="support">
-    <joint name="right_joint1" value="1.562331480"/>
-    <joint name="right_joint2" value="-1.752886528"/>
-    <joint name="right_joint3" value="-0.050841441"/>
-    <joint name="right_joint4" value="2.14"/>
-    <joint name="right_joint5" value="-0.014311700"/>
-    <joint name="right_joint6" value="-0.007627089"/>
-    <joint name="right_joint7" value="0.118996548"/>
+    <joint name="right_joint1" value="1.666667263"/>
+    <joint name="right_joint2" value="-0.246841916"/>
+    <joint name="right_joint3" value="-0.438095096"/>
+    <joint name="right_joint4" value="1.094618147"/>
+    <joint name="right_joint5" value="-0.688130964"/>
+    <joint name="right_joint6" value="0.528677684"/>
+    <joint name="right_joint7" value="1.298612230"/>
   </group_state>
 
   <group_state group="both_arms" name="support">
-    <joint name="left_joint1" value="-1.574653504"/>
-    <joint name="left_joint2" value="-1.757092771"/>
-    <joint name="left_joint3" value="-0.045413467"/>
-    <joint name="left_joint4" value="2.14"/>
-    <joint name="left_joint5" value="-0.013561208"/>
-    <joint name="left_joint6" value="-0.009267698"/>
-    <joint name="left_joint7" value="0.122714100"/>
-    <joint name="right_joint1" value="1.562331480"/>
-    <joint name="right_joint2" value="-1.752886528"/>
-    <joint name="right_joint3" value="-0.050841441"/>
-    <joint name="right_joint4" value="2.14"/>
-    <joint name="right_joint5" value="-0.014311700"/>
-    <joint name="right_joint6" value="-0.007627089"/>
-    <joint name="right_joint7" value="0.118996548"/>
+    <joint name="left_joint1" value="-1.579034281"/>
+    <joint name="left_joint2" value="-1.757145131"/>
+    <joint name="left_joint3" value="-0.034435346"/>
+    <joint name="left_joint4" value="2.115"/>
+    <joint name="left_joint5" value="-0.029373891"/>
+    <joint name="left_joint6" value="-0.003665191"/>
+    <joint name="left_joint7" value="1.545"/>
+    <joint name="right_joint1" value="1.666667263"/>
+    <joint name="right_joint2" value="-0.246841916"/>
+    <joint name="right_joint3" value="-0.438095096"/>
+    <joint name="right_joint4" value="1.094618147"/>
+    <joint name="right_joint5" value="-0.688130964"/>
+    <joint name="right_joint6" value="0.528677684"/>
+    <joint name="right_joint7" value="1.298612230"/>
   </group_state>
 
   <group_state group="left_gripper" name="open">
@@ -127,7 +127,12 @@
   <disable_collisions link1="left_link6" link2="left_link7" reason="Adjacent"/>
   <disable_collisions link1="left_link7" link2="left_tool0" reason="Adjacent"/>
   <disable_collisions link1="left_tool0" link2="left_tcp_link" reason="Adjacent"/>
-  <disable_collisions link1="left_tool0" link2="left_ctag_base_link" reason="Adjacent"/>
+  <disable_collisions link1="left_link7" link2="left_ctag_ft_sensor_link" reason="Adjacent"/>
+  <disable_collisions link1="left_tool0" link2="left_ctag_ft_sensor_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_ft_sensor_link" link2="left_ctag_connector_link" reason="Adjacent"/>
+  <disable_collisions link1="left_ctag_connector_link" link2="left_ctag_base_link" reason="Adjacent"/>
+  <disable_collisions link1="left_tool0" link2="left_ctag_connector_link" reason="Adjacent"/>
+  <disable_collisions link1="left_tool0" link2="left_ctag_base_link" reason="Never"/>
   <disable_collisions link1="left_ctag_base_link" link2="left_ctag_left_1_link" reason="Adjacent"/>
   <disable_collisions link1="left_ctag_base_link" link2="left_ctag_left_2_link" reason="Adjacent"/>
   <disable_collisions link1="left_ctag_base_link" link2="left_ctag_right_1_link" reason="Adjacent"/>
@@ -158,7 +163,12 @@
   <disable_collisions link1="right_link6" link2="right_link7" reason="Adjacent"/>
   <disable_collisions link1="right_link7" link2="right_tool0" reason="Adjacent"/>
   <disable_collisions link1="right_tool0" link2="right_tcp_link" reason="Adjacent"/>
-  <disable_collisions link1="right_tool0" link2="right_ctag_base_link" reason="Adjacent"/>
+  <disable_collisions link1="right_link7" link2="right_ctag_ft_sensor_link" reason="Adjacent"/>
+  <disable_collisions link1="right_tool0" link2="right_ctag_ft_sensor_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_ft_sensor_link" link2="right_ctag_connector_link" reason="Adjacent"/>
+  <disable_collisions link1="right_ctag_connector_link" link2="right_ctag_base_link" reason="Adjacent"/>
+  <disable_collisions link1="right_tool0" link2="right_ctag_connector_link" reason="Adjacent"/>
+  <disable_collisions link1="right_tool0" link2="right_ctag_base_link" reason="Never"/>
   <disable_collisions link1="right_ctag_base_link" link2="right_ctag_left_1_link" reason="Adjacent"/>
   <disable_collisions link1="right_ctag_base_link" link2="right_ctag_left_2_link" reason="Adjacent"/>
   <disable_collisions link1="right_ctag_base_link" link2="right_ctag_right_1_link" reason="Adjacent"/>

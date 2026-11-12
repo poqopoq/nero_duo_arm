@@ -11,7 +11,7 @@ ros2_ws/src/
   dual_nero_cameras/           # RealSense launch configuration
   dual_nero_control/           # MoveIt FollowJointTrajectory bridge
   dual_nero_moveit_config/     # dual-arm MoveIt configuration
-  dual_nero_calibration/       # checkerboard camera calibration
+  dual_nero_calibration/       # camera extrinsics + gripper TCP/opening calibration
   dual_nero_gripper_ft_sensor/ # gripper six-axis force/torque UART driver
   dual_nero_webapp/            # browser joint and camera dashboard
 
