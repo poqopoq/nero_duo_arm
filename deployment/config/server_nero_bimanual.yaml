@@ -2,7 +2,6 @@
 #
 # Copy this file to the GPU host and replace model.repo_or_path before use.
 # action_fps must equal the checkpoint's action rate and the rollout --fps.
-# Use deployment nero-bimanual-14d + axis_angle14 only with a matching checkpoint.
 deployment: nero-bimanual
 model:
   repo_or_path: /absolute/path/to/nero_bimanual_rot6d_checkpoint

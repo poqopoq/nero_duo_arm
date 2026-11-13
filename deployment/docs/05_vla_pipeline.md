@@ -4,11 +4,38 @@
 > `lerobot.async_inference.*` 已移除。默认 `execution_mode:=dry_run`，真实运动
 > 需要多道门控。
 
+当前目标是打通 LeRobot `pi05`（π0.5）到 NERO 实机的整条链路。官方
+`lerobot/pi05_base` 只是训练基座，不能直接作为 NERO policy；实机必须使用在
+20-D NERO 数据上微调、且 checkpoint 特征契约与本仓库一致的 pi0.5。
+
+## 0. 当前服务器核对（2026-11-12）
+
+当前 GPU 主机与文档命令对应的实际环境如下；NERO 控制电脑上的旧
+`/home/work/...` 路径不属于 GPU 主机，不能混用。
+
+```text
+GPU 主机:  hello-ThinkStation-PX
+仓库:      /home/zhiyuan/nero_duo_arm
+LeRobot:   0.6.2，/home/zhiyuan/miniforge3/envs/lerobot
+GPU:       2 x RTX 4090 24 GB
+当前 server: /home/zhiyuan/vla_server/server_nero_xense_smoke.yaml，
+             deployment=nero-bimanual-xense-smoke，监听 0.0.0.0:7447
+```
+
+- 当前运行的 server 是旧的 SmolVLA plates smoke，不是 pi0.5。启动 pi0.5 前必须先
+  停掉它，否则 `7447` 端口会被占用。
+- `/home/zhiyuan/models/pi05_base` 存在，但它是 32-D state/action、三路
+  `224x224` 基座相机键 `base_0_rgb/left_wrist_0_rgb/right_wrist_0_rgb` 的训练基座，
+  不能直接对接本仓库的 20-D rot6d NERO 契约。
+- 当前没有可用于 NERO 的 pi0.5 微调 checkpoint；`server_nero_pi05.yaml` 指向的
+  `/home/zhiyuan/checkpoints/pi05_nero20/checkpoints/last/pretrained_model`
+  尚未生成。
+
 ## 1. 架构
 
 ```text
 GPU 服务器                                  本地 NERO 电脑
-lerobot-policy-server / SmolVLA  <--Zenoh-->  lerobot-rollout remote client
+lerobot-policy-server / pi0.5 / SmolVLA  <--Zenoh-->  lerobot-rollout remote client
                                                         |
                                                         | Unix socket
                                                         v
@@ -434,44 +461,97 @@ ros2 service call /left_gripper/enable std_srvs/srv/SetBool "{data: true}"
 
 ## 7. Policy server / client
 
-仓库内已提供两个 schema 模板；复制到 GPU 服务器后只需改 checkpoint 路径、
-`execution.action_fps` 和相机分辨率：
+仓库内已提供三个 schema 模板。GPU 主机上的仓库路径为
+`/home/zhiyuan/nero_duo_arm`，因此不要先复制到别处再引用相对路径：
 
 - `deployment/config/server_nero.yaml`：单臂 7-D axis-angle。
 - `deployment/config/server_nero_bimanual.yaml`：双臂 20-D rot6d。
+- `deployment/config/server_nero_pi05.yaml`：双臂 20-D rot6d，只接受在 NERO
+  20-D 数据上微调后的 pi0.5 checkpoint。
 
-`action_fps` 必须与 checkpoint 的动作频率和本地 `--fps` 三者一致。模板先写
-`5.0`，仅用于首轮低速联调；正式运行改回训练频率并同步修改 client。
+`action_fps` 必须等于 checkpoint 的训练动作频率，并与 client 的 `--fps` 一致。
+不能为了“首轮慢一点”随意把 30 Hz 的 checkpoint 写成 5 Hz；那会改变动作时间轴。
+首轮真机限速应使用 bridge 的 `max_translation_step_m`、`max_rotation_step_rad`
+和 `max_joint_step_rad`。只有确实按 5 Hz 训练过的 checkpoint 才能使用 5.0。
 
-启动前先在 GPU 服务器验证 YAML 能被 0.6.2 解析：
+启动前先在 GPU 服务器同时校验 YAML 和 checkpoint 的 canonical feature 契约：
 
 ```bash
-/home/work/miniforge3/envs/lerobot/bin/python - <<'PY'
+cd /home/zhiyuan/nero_duo_arm/deployment/config
+
+GPU_PY=/home/zhiyuan/miniforge3/envs/lerobot/bin/python
+export GPU_CFG=/home/zhiyuan/nero_duo_arm/deployment/config/server_nero_pi05.yaml
+
+"$GPU_PY" - <<'PY'
+import json
+import os
+from pathlib import Path
+
 import draccus
 from lerobot.remote_inference import ServerConfig
 
-cfg = draccus.parse(
-    config_class=ServerConfig,
-    config_path='server_nero.yaml',
-)
-print(cfg.deployment, cfg.robot_type, cfg.action_feature.shape,
-      cfg.execution.action_fps)
+cfg = draccus.parse(config_class=ServerConfig, config_path=os.environ['GPU_CFG'])
+root = Path(cfg.model.repo_or_path)
+if not (root / 'config.json').is_file():
+    raise SystemExit(f'checkpoint not found or incomplete: {root}')
+
+policy = json.loads((root / 'config.json').read_text())
+canonical = {feature.name: tuple(feature.shape) for feature in cfg.features}
+
+actual = {}
+for name, feature in policy['input_features'].items():
+    actual[name] = (
+        (feature['shape'][1], feature['shape'][2], feature['shape'][0])
+        if feature['type'] == 'VISUAL'
+        else tuple(feature['shape'])
+    )
+
+if canonical != actual:
+    raise SystemExit(f'feature mismatch: yaml={canonical} checkpoint={actual}')
+output = tuple(policy['output_features']['action']['shape'])
+if tuple(cfg.action_feature.shape) != output:
+    raise SystemExit(f'action mismatch: yaml={cfg.action_feature.shape} checkpoint={output}')
+names = policy.get('action_feature_names')
+if names and tuple(names) != tuple(cfg.action_feature.names):
+    raise SystemExit('action names differ from checkpoint action_feature_names')
+
+print('OK', cfg.deployment, cfg.robot_type, cfg.model.repo_or_path,
+      'fps=', cfg.execution.action_fps, 'action=', output)
 PY
 ```
 
-然后启动 policy server（0.6.2）：
+当前模板的 checkpoint 尚未生成，所以会先报 `checkpoint not found`；如果把
+`model.repo_or_path` 指向 `/home/zhiyuan/models/pi05_base`，则会报
+`feature mismatch`。只有真正的 NERO pi0.5 微调 checkpoint 才能返回 `OK`。
+
+若 `7447` 已被旧 server 占用，先确认 PID 后停掉旧进程，再启动新 server：
 
 ```bash
-lerobot-policy-server \
-  --config_path=server_nero.yaml \
-  --zenoh.listen_endpoints='[tcp/0.0.0.0:7447]'
+kill "$(cat /home/zhiyuan/vla_server/server.pid)"
+
+# 等端口释放；应无输出
+ss -ltnp | rg ':7447' || true
+
+/home/zhiyuan/miniforge3/envs/lerobot/bin/python \
+  -m lerobot.scripts.lerobot_policy_server \
+  --config_path=/home/zhiyuan/nero_duo_arm/deployment/config/server_nero_pi05.yaml
 ```
+
+`server_nero_pi05.yaml` 已包含 `zenoh.listen_endpoints: [tcp/0.0.0.0:7447]`；
+只有需要临时换端口时才追加 `--zenoh.listen_endpoints='[tcp/0.0.0.0:7448]'`，
+client 也必须同步改 endpoint。旧的直接命令 `lerobot-policy-server` 只有在
+`/home/zhiyuan/miniforge3/envs/lerobot/bin` 已加入 `PATH` 时才等价。
 
 `model.repo_or_path`、`execution.action_fps`、`robot_type`、`features`、
 `action_feature` 必须和本地 checkpoint/插件一致。单臂 action 名使用
 `ee.x.pos ... ee.gripper.pos`；双臂 rot6d 使用 `left_tcp.*/right_tcp.*` 的 20 维契约。
 首轮只开放 `chunk`，验证后再加 `rtc_guided`；`rtc_trained` 需要训练时支持
 action-prefix conditioning 的 checkpoint。
+
+使用 `server_nero_pi05.yaml` 时，下面双臂 client 必须同时改两处：
+`--inference.deployment=nero-bimanual-pi05`，且 `--fps` 等于该 server 的
+`execution.action_fps`（当前模板为 `30`）。`robot_type` 与
+`--robot.policy_robot_type` 都保持 `xtac_umi_g1`。
 
 先确认本地到 server 的 Zenoh 端口可达：
 
@@ -489,7 +569,7 @@ ssh -N -L 7447:127.0.0.1:7447 <USER>@<SERVER_IP>
 --inference.endpoint=tcp/127.0.0.1:7447
 ```
 
-当前双臂联调基线使用
+当前双臂 SmolVLA smoke 联调基线（不是 pi0.5）使用
 `/home/zhiyuan/checkpoints/xense_plates_nero20_smoke_features/checkpoints/000020/pretrained_model`：
 20-D rot6d、三路 `480x640` 图像、`chunk` 50 步、30 Hz。server 的
 `execution.action_fps` 和 client 的 `--fps` 必须同时设为 `30`。在该基线上，
@@ -678,7 +758,8 @@ watchdog 锁存、IK 失败、关节单步超限、14 关节单 goal、14-D axis
 - `trajectory` 是逐 action 的短轨迹；`stream` 是 50 Hz 的 latest-wins 绝对关节
   目标流，没有内置插值。模型输出频率低于控制频率时，bridge 会保持最后一个目标。
 - IK 只用当前/目标关节状态做碰撞检查，未接入在线点云 PlanningScene。
-- 真实双臂 SmolVLA checkpoint 整链路仍未验收。
+- 真实双臂 SmolVLA checkpoint 整链路仍未验收；NERO 20-D pi0.5 微调
+  checkpoint 尚未生成。
 
 验收标准：
 
@@ -688,7 +769,10 @@ watchdog 锁存、IK 失败、关节单步超限、14 关节单 goal、14-D axis
 4. `trajectory` + dry-run 轨迹桥只生成一条 14 关节 goal；`stream` + dry-run
    持续发布两侧 7 关节命令，stop 后立即停止。
 5. 真机 `+2 mm` 双侧同步，停止后两侧门关闭且软件急停生效。
-6. SmolVLA 在 5 Hz remote inference 连续运行 20 秒无 IK/反馈/控制 fault。
+6. SmolVLA smoke checkpoint 在 5 Hz remote inference 连续运行 20 秒无
+   IK/反馈/控制 fault。
+7. pi0.5 微调 checkpoint 先通过第 7 节的 feature 预检，再按训练频率连续运行
+   20 秒无 contract/IK/反馈/控制 fault。
 
 ## 11. 真机联调记录（2026-11-09）
 
@@ -717,7 +801,7 @@ right: position_error=0.013 mm rotation_error=0.00002 rad OK
 上限外。因此复位后必须**保持电机使能**，只关闭 `/control_enable` 门，并让
 归位脚本同时回收 `joint4`/`joint7`。重新失能前必须重新执行归位。
 
-### 11.3 remote inference 实测
+### 11.3 SmolVLA smoke remote inference 实测
 
 `lerobot-rollout` 以 30 Hz 连接 `nero-bimanual-xense-smoke` 成功，contract
 校验通过，chunk 正常返回。首帧策略动作（原始值，未过滤）：
@@ -736,7 +820,7 @@ right: x=+0.2843 y=-0.0197 z=-0.2737 gripper=0.614
 两者叠加后返回 `-31 (NO_IK_SOLUTION)`。当前支撑位本身贴近 `joint2/joint4`
 下限，策略方向再叠加旋转就超出可达域。这说明**不能靠放宽关节限幅解决**。
 
-### 11.4 真实执行链验证
+### 11.4 SmolVLA smoke 真实执行链验证
 
 在 `stream` 模式、50 Hz、`max_translation_step_m=0.002`、
 `max_rotation_step_rad=0.01`、`max_joint_step_rad=0.05`、夹爪禁动下，

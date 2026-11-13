@@ -1,11 +1,12 @@
-# LeRobot 0.6.2 remote policy server template for the 20-D Xense UMI contract.
+# LeRobot 0.6.2 remote policy server template for the 20-D NERO/Xense contract.
 #
-# Copy this file to the GPU host and replace model.repo_or_path before use.
+# Use only a pi0.5 checkpoint fine-tuned on the converted 20-D NERO dataset.
+# Do not point this at lerobot/pi05_base: the base checkpoint uses 32-D
+# state/action and base_0_rgb/left_wrist_0_rgb/right_wrist_0_rgb camera keys.
 # action_fps must equal the checkpoint's action rate and the rollout --fps.
-# Use deployment nero-bimanual-14d + axis_angle14 only with a matching checkpoint.
 deployment: nero-bimanual-pi05
 model:
-  repo_or_path:  /data/checkpoints/pi05_nero/checkpoints/last/pretrained_model
+  repo_or_path: /home/zhiyuan/checkpoints/pi05_nero20/checkpoints/last/pretrained_model
   revision: null
   device: cuda
 execution:
@@ -21,7 +22,7 @@ zenoh:
   mode: peer
   listen_endpoints: [tcp/0.0.0.0:7447]
 semantics: nero-bimanual-tcp-metres-rot6d-gripper-normalized-v1
-robot_type: nero-duo-arm
+robot_type: xtac_umi_g1
 features:
   - name: observation.state
     shape: [20]
