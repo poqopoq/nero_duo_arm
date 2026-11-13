@@ -14,6 +14,7 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import UInt8MultiArray
 from std_srvs.srv import Trigger
 
@@ -88,6 +89,10 @@ class GripperFtSensorNode(Node):
             "raw_topic", "/gripper_ft/raw").value)
         self._publish_raw = bool(self.declare_parameter(
             "publish_raw", False).value)
+        qos_reliability = str(self.declare_parameter(
+            "qos_reliability", "best_effort").value).strip().lower()
+        self._qos_depth = int(self.declare_parameter(
+            "qos_depth", 1).value)
         self._reconnect_interval = float(self.declare_parameter(
             "reconnect_interval", 2.0).value)
         self._response_timeout = float(self.declare_parameter(
@@ -99,12 +104,28 @@ class GripperFtSensorNode(Node):
             raise ValueError("reconnect_interval must be positive")
         if self._response_timeout <= 0.0:
             raise ValueError("response_timeout must be positive")
+        if qos_reliability not in ("best_effort", "reliable"):
+            raise ValueError(
+                "qos_reliability must be 'best_effort' or 'reliable'")
+        if self._qos_depth <= 0:
+            raise ValueError("qos_depth must be positive")
 
-        self._data_publisher = self.create_publisher(SixAxisForce, data_topic, 10)
+        qos = QoSProfile(
+            reliability=(
+                ReliabilityPolicy.BEST_EFFORT
+                if qos_reliability == "best_effort"
+                else ReliabilityPolicy.RELIABLE
+            ),
+            history=HistoryPolicy.KEEP_LAST,
+            depth=self._qos_depth,
+        )
+
+        self._data_publisher = self.create_publisher(
+            SixAxisForce, data_topic, qos)
         self._raw_publisher = None
         if self._publish_raw:
             self._raw_publisher = self.create_publisher(
-                UInt8MultiArray, raw_topic, 10)
+                UInt8MultiArray, raw_topic, qos)
 
         self._commands: queue.Queue[Optional[_Command]] = queue.Queue(maxsize=8)
         self._active_command: Optional[_Command] = None
@@ -298,7 +319,15 @@ class GripperFtSensorNode(Node):
 
             try:
                 self._start_next_command()
-                data = self._serial.read(4096)
+                # A 4096-byte read only returns after the 50 ms serial timeout
+                # at 1 kHz (about 1.5 kB arrives in that window), which
+                # batches roughly 50 samples.  Return as soon as the first
+                # byte arrives, then drain what the kernel has already queued.
+                data = self._serial.read(1)
+                if data:
+                    waiting = self._serial.in_waiting
+                    if waiting:
+                        data += self._serial.read(waiting)
                 if data:
                     for frame in self._parser.feed(data):
                         self._handle_frame(frame)

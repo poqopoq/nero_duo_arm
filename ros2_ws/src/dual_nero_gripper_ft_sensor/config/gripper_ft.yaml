@@ -10,5 +10,7 @@ gripper_ft_node:
     data_topic: /gripper_ft/data
     raw_topic: /gripper_ft/raw
     publish_raw: false
+    qos_reliability: best_effort
+    qos_depth: 1
     response_timeout: 1.0
     reconnect_interval: 2.0

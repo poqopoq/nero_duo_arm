@@ -619,6 +619,11 @@ ros2 launch dual_nero_gripper_ft_sensor gripper_ft.launch.py \
 ros2 topic echo /gripper_ft/data
 ros2 topic hz /gripper_ft/data
 ros2 service call /gripper_ft_node/get_version std_srvs/srv/Trigger "{}"
+
+# 先停止占用串口的 ROS 节点，再直接监测 1 kHz 帧率和触摸响应
+cd /home/work/nero_duo_arm
+/usr/bin/python3 deployment/scripts/monitor_gripper_ft_sensors.py \
+  /dev/ttyUSB1 /dev/ttyUSB3 /dev/ttyUSB4 --duration 30
 # 先停止节点，再扫描串口与传感器 SN 的对应关系
 sg dialout -c '/usr/bin/python3 \
   deployment/scripts/identify_gripper_ft_sensors.py'

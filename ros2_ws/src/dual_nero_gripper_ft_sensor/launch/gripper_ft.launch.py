@@ -18,6 +18,8 @@ def generate_launch_description() -> LaunchDescription:
         "query_serial_number_on_start")
     require_serial_match = LaunchConfiguration("require_serial_match")
     publish_raw = LaunchConfiguration("publish_raw")
+    qos_reliability = LaunchConfiguration("qos_reliability")
+    qos_depth = LaunchConfiguration("qos_depth")
     response_timeout = LaunchConfiguration("response_timeout")
     reconnect_interval = LaunchConfiguration("reconnect_interval")
 
@@ -56,6 +58,12 @@ def generate_launch_description() -> LaunchDescription:
             "publish_raw", default_value="false",
             description="Also publish raw measurement payload bytes"),
         DeclareLaunchArgument(
+            "qos_reliability", default_value="best_effort",
+            description="Force data QoS: best_effort (low latency) or reliable"),
+        DeclareLaunchArgument(
+            "qos_depth", default_value="1",
+            description="Force data QoS history depth"),
+        DeclareLaunchArgument(
             "response_timeout", default_value="1.0",
             description="Command response timeout in seconds"),
         DeclareLaunchArgument(
@@ -82,6 +90,10 @@ def generate_launch_description() -> LaunchDescription:
                     require_serial_match, value_type=bool),
                 "publish_raw": ParameterValue(
                     publish_raw, value_type=bool),
+                "qos_reliability": ParameterValue(
+                    qos_reliability, value_type=str),
+                "qos_depth": ParameterValue(
+                    qos_depth, value_type=int),
                 "response_timeout": ParameterValue(
                     response_timeout, value_type=float),
                 "reconnect_interval": ParameterValue(

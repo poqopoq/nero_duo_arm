@@ -188,6 +188,20 @@ ros2 service call /gripper_ft_node/set_sample_rate \
   dual_nero_gripper_ft_sensor_msgs/srv/SetSampleRate "{sample_rate_hz: 1000}"
 ```
 
+不启动 ROS 时，可以直接监测串口帧率、数值变化率和触摸响应。脚本会独占
+串口，运行前先停止占用对应端口的 ROS 节点：
+
+```bash
+cd /home/work/nero_duo_arm
+/usr/bin/python3 deployment/scripts/monitor_gripper_ft_sensors.py \
+  /dev/ttyUSB1 /dev/ttyUSB3 /dev/ttyUSB4 --duration 30
+```
+
+不传端口时默认监测全部 `/dev/ttyUSB*`。持续触摸传感器 2–3 秒，出现
+`<== TOUCH` 的那一路即当前传感器；`rate` 应约为 1000 Hz，`changed` 接近
+`rate` 表示每个新帧的六轴数值都在变化，`span` 是该显示窗口内的峰谷变化。
+脚本结束时会输出每路平均帧率、最大变化轴、CRC 错误和总帧数。
+
 修改波特率会同时修改传感器和本节点串口设置：
 
 ```bash
@@ -235,7 +249,77 @@ CTAG2F90D 自身从安装面到闭合指尖约 `222.5 mm`，因此整条末端�
 
 当前 ROS 接口保留原始读数，不对零点和轴方向做隐式修正。
 
-## 8. 测试与故障排查
+## 8. 低延迟 1 kHz 实时力控
+
+### 8.1 驱动路径
+
+节点默认使用低延迟配置：
+
+- 串口读取在首字节到达后立即返回，并排空当前 `in_waiting` 数据，不再因为
+  `read(4096)` 加 50 ms 超时而一次积压约 50 帧。
+- `/gripper_ft/data` 使用 `best_effort`、`KEEP_LAST(1)` QoS，旧样本不会在
+  DDS 或订阅端排队。
+- 保持 `921600` 波特率和传感器 `1000 Hz` 输出。1000 Hz 时线路占用约
+  `30 kB/s`，约为 921600 8N1 容量的 33%。
+
+当前机器上以 `/dev/ttyUSB1` 实测 5 s：平均 `1000.0 Hz`，ROS 端到达间隔
+P50 `1.006 ms`、P99 `1.736 ms`、最大 `1.965 ms`，没有超过 5 ms 的间隔，
+串口 CRC 错误为 0。
+
+修改采样率仍依赖双向 UART。若扫描结果为 `DATA_ONLY_NO_SN`，必须先连接
+传感器黄色 RX 到适配器 TX，否则 `set_sample_rate` 服务不会得到应答。
+
+### 8.2 控制环设计
+
+1 kHz 力控不应把耗时的控制计算直接放在 ROS 订阅回调里。推荐订阅回调只校验
+并保存最新样本，再由独立 1 kHz 定时器读取：
+
+```text
+serial worker -> /gripper_ft/data (best_effort, depth 1)
+              -> atomic latest-sample mailbox
+              -> 1 kHz control timer -> command path
+```
+
+控制定时器每次读取最新样本并检查样本年龄。建议超过 `3–5 ms` 就判定为超时，
+使用保持、软停机或受控衰减，不能把旧力值无限重复用于闭环。不要使用
+`KEEP_LAST(10)` 以上深度，也不要在回调中执行 `ros2 topic echo`、写大量日志、
+保存大文件或等待服务。
+
+订阅端应使用与发布端兼容的 QoS，例如：
+
+```python
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+
+control_qos = QoSProfile(
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+)
+self.create_subscription(
+    SixAxisForce, '/gripper_ft/data', latest_sample_callback,
+    control_qos)
+```
+
+### 8.3 系统实时性
+
+当前数据链路已经达到软实时 1 kHz。进一步降低尾部延迟可做以下调整：
+
+- 保持 USB 设备常供电，禁用对应 USB 口自动挂起：向
+  `/sys/bus/usb/devices/<bus-port>/power/control` 写入 `on`。
+- 将 CPU governor 从 `powersave` 改为 `performance`，并避免深度 C-state。
+- 用 `taskset`/cpuset 将串口节点、DDS 和控制循环隔开到专用 CPU，避免与
+  相机、建图、训练或网页进程争用。
+- 用 `chrt -f 80` 等 SCHED_FIFO 策略运行串口线程和控制线程；需要相应权限，
+  并保留看门狗和超时保护。
+- 对硬实时或确定性要求高的场景使用 PREEMPT_RT，并把实时控制环做成 C++、
+  直接串口或共享内存路径。Python GC、GIL、ROS 2 执行器和 DDS 调度无法提供
+  严格的 1 ms 最坏情况保证。
+
+消息 `header.stamp` 是驱动收到帧的时间，不是传感器内部采样时刻；协议没有
+样本时间戳。闭环应优先使用“最新样本 + 样本年龄”，不要把相邻消息时间差当作
+传感器时钟。
+
+## 9. 测试与故障排查
 
 协议测试不依赖硬件：
 

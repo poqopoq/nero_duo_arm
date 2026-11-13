@@ -111,6 +111,22 @@ ros2 service call /gripper_ft_node/set_baud_rate \
 设置波特率成功后，节点会关闭原串口并以新波特率重新打开；`baud_rate` 参数
 同步更新。若服务失败但设备已经切换波特率，需要以新波特率重启节点。
 
+## 低延迟 1 kHz
+
+节点默认按低延迟方式工作：串口收到首字节后立即读取当前内核缓冲区，不再
+等待 50 ms 的串口超时；`/gripper_ft/data` 默认使用 `best_effort`、
+`keep_last(1)` QoS。当前硬件实测平均 `1000 Hz`，ROS 端到达间隔 P99 约
+`1.7 ms`。
+
+实时力控订阅端应使用 best-effort、depth 1 QoS，并把回调收到的最后一帧放入
+线程安全的最新值槽位，由独立 1 kHz 控制定时器读取；不要在每个回调里做重计算
+或阻塞式日志。控制器还应检查样本年龄，例如超过 `3–5 ms` 时按超时处理。
+
+`ros2 topic hz` 可以观察到约 1000 Hz，但平均帧率不能证明低延迟；验收时应
+同时统计到达间隔 P99、最大间隔、CRC 错误和样本年龄。当前 Python + ROS 2
+链路属于软实时，若要求硬实时或抖动小于 1 ms，应把串口采集和力控环放到
+PREEMPT_RT 下的 C++/共享内存路径，而不是依赖 Python topic 回调。
+
 ## 参数
 
 | 参数 | 默认值 | 说明 |
@@ -125,6 +141,8 @@ ros2 service call /gripper_ft_node/set_baud_rate \
 | `data_topic` | `/gripper_ft/data` | 六维力话题 |
 | `raw_topic` | `/gripper_ft/raw` | 原始数据话题 |
 | `publish_raw` | `false` | 是否发布原始 24 字节数据区 |
+| `qos_reliability` | `best_effort` | 力数据 QoS；实时控制用 `best_effort`，可靠记录可改 `reliable` |
+| `qos_depth` | `1` | 力数据 QoS 历史深度；实时控制保持 1，避免排队旧样本 |
 | `response_timeout` | `1.0` | 命令应答超时，秒 |
 | `reconnect_interval` | `2.0` | 串口重连间隔，秒 |
 
