@@ -54,6 +54,7 @@ def generate_launch_description():
         DeclareLaunchArgument('max_translation_step_m', default_value='0.01'),
         DeclareLaunchArgument('max_rotation_step_rad', default_value='0.05'),
         DeclareLaunchArgument('max_joint_step_rad', default_value='0.15'),
+        DeclareLaunchArgument('max_gripper_step_m', default_value='0.02'),
         DeclareLaunchArgument('ik_service', default_value='/compute_ik'),
         DeclareLaunchArgument('left_ik_group_name', default_value='left_arm'),
         DeclareLaunchArgument('right_ik_group_name', default_value='right_arm'),
@@ -120,6 +121,7 @@ def generate_launch_description():
                 'max_rotation_step_rad': LaunchConfiguration(
                     'max_rotation_step_rad'),
                 'max_joint_step_rad': LaunchConfiguration('max_joint_step_rad'),
+                'max_gripper_step_m': LaunchConfiguration('max_gripper_step_m'),
                 'ik_service': LaunchConfiguration('ik_service'),
                 'left_ik_group_name': LaunchConfiguration('left_ik_group_name'),
                 'right_ik_group_name': LaunchConfiguration('right_ik_group_name'),

@@ -14,6 +14,11 @@ solved for both arms before either side is sent. The ``trajectory`` mode
 dispatches the 14 joints in one ``FollowJointTrajectory`` goal, while
 ``stream`` publishes both sides back-to-back from the same 14-joint target at
 a fixed command rate.
+
+The third schema, ``joint16``, is the native RoboTwin NERO joint contract:
+right 7 joints, left 7 joints, then right/left gripper widths in metres.  It
+skips IK and sends the joint targets directly through the same trajectory or
+stream path.
 """
 from __future__ import annotations
 
@@ -54,8 +59,8 @@ from .vla_bridge import (
 )
 
 SIDES = ('left', 'right')
-SCHEMAS = ('rot6d20', 'axis_angle14')
-ACTION_SIZES = {'rot6d20': 20, 'axis_angle14': 14}
+SCHEMAS = ('rot6d20', 'axis_angle14', 'joint16')
+ACTION_SIZES = {'rot6d20': 20, 'axis_angle14': 14, 'joint16': 16}
 EXECUTION_MODES = ('dry_run', 'ik_dry_run', 'trajectory', 'stream')
 LOCAL_JOINT_NAMES = tuple(f'joint{index}' for index in range(1, 8))
 ALL_JOINT_NAMES = tuple(
@@ -165,6 +170,7 @@ class NeroBimanualVlaBridge(Node):
         self.declare_parameter('max_translation_step_m', 0.01)
         self.declare_parameter('max_rotation_step_rad', 0.05)
         self.declare_parameter('max_joint_step_rad', 0.15)
+        self.declare_parameter('max_gripper_step_m', 0.02)
         self.declare_parameter('joint_position_min', [
             -2.70526, -1.760, -2.75, -1.01, -2.75, -0.7330383, -1.5707963,
         ])
@@ -256,6 +262,8 @@ class NeroBimanualVlaBridge(Node):
         self.max_rotation_step = float(
             self.get_parameter('max_rotation_step_rad').value)
         self.max_joint_step = float(self.get_parameter('max_joint_step_rad').value)
+        self.max_gripper_step = float(
+            self.get_parameter('max_gripper_step_m').value)
         self.joint_position_min = _as_finite_floats(
             self.get_parameter('joint_position_min').value, 7, 'joint_position_min')
         self.joint_position_max = _as_finite_floats(
@@ -321,6 +329,8 @@ class NeroBimanualVlaBridge(Node):
             self.get_parameter('trajectory_result_timeout_sec').value)
         if self.max_joint_step <= 0.0:
             raise ValueError('max_joint_step_rad must be positive')
+        if self.max_gripper_step <= 0.0:
+            raise ValueError('max_gripper_step_m must be positive')
         if self.trajectory_duration <= 0.0:
             raise ValueError('trajectory_duration_sec must be positive')
         if self.stream_command_rate_hz <= 0.0:
@@ -636,6 +646,70 @@ class NeroBimanualVlaBridge(Node):
             'gripper_error': None,
         }
 
+    def _send_gripper_widths(self, widths_m: dict[str, float]) -> dict:
+        """Map policy gripper widths in metres to the CTAG position command."""
+        if not self.gripper_enabled or not self.allow_gripper_motion:
+            return {
+                'gripper_commanded': False,
+                'gripper_positions': {},
+                'gripper_error': 'gripper motion disabled in VLA bridge',
+            }
+        if self.execution_mode == 'dry_run':
+            return {
+                'gripper_commanded': False,
+                'gripper_positions': {},
+                'gripper_error': None,
+            }
+        now = time.monotonic()
+        with self._lock:
+            stale = {}
+            for side in SIDES:
+                feedback = self._feedback[side]
+                age = (
+                    now - feedback['gripper_mono']
+                    if feedback['gripper_mono'] > 0.0 else None
+                )
+                if (
+                    feedback['gripper_width_m'] is None
+                    or age is None
+                    or age > self.gripper_feedback_timeout
+                ):
+                    stale[side] = age
+        if stale:
+            detail = ', '.join(
+                f'{side}=' + ('missing' if age is None else f'{age:.2f}s old')
+                for side, age in stale.items()
+            )
+            return {
+                'gripper_commanded': False,
+                'gripper_positions': {},
+                'gripper_error': f'gripper feedback not fresh: {detail}',
+            }
+
+        positions = {}
+        span = self.gripper_position_max - self.gripper_position_min
+        for side in SIDES:
+            normalized = max(0.0, min(1.0, widths_m[side] / self.gripper_max_m))
+            positions[side] = int(round(
+                self.gripper_position_min + (1.0 - normalized) * span))
+        for side in SIDES:
+            message = Int32()
+            message.data = positions[side]
+            self._gripper_command_publishers[side].publish(message)
+        self.get_logger().info(
+            'VLA gripper widths sent: '
+            + ', '.join(
+                f'{side}={widths_m[side]:.4f}m/{positions[side]}'
+                for side in SIDES
+            ),
+            throttle_duration_sec=1.0,
+        )
+        return {
+            'gripper_commanded': True,
+            'gripper_positions': positions,
+            'gripper_error': None,
+        }
+
     def _image_cb(self, key: str, msg: Image) -> None:
         if msg.encoding not in ('rgb8', 'bgr8', 'yuv422_yuy2', 'yuyv', 'yuv422'):
             self.get_logger().warn(
@@ -711,15 +785,18 @@ class NeroBimanualVlaBridge(Node):
             state: list[float] = []
             joints_by_side: dict[str, list[float]] = {}
             grippers: dict[str, float] = {}
+            gripper_widths: dict[str, float] = {}
             pose_by_side: dict[str, list[float]] = {}
             timestamps: dict[str, float] = {}
             for side in SIDES:
                 feedback = self._feedback[side]
-                if feedback['tcp_xyz'] is None or feedback['tcp_rotvec'] is None:
-                    return None, f'no {side} TCP feedback received'
-                tcp_age = now - feedback['tcp_mono']
-                if tcp_age > self.observation_timeout:
-                    return None, f'{side} TCP feedback is stale ({tcp_age:.3f}s old)'
+                if self.action_schema != 'joint16':
+                    if feedback['tcp_xyz'] is None or feedback['tcp_rotvec'] is None:
+                        return None, f'no {side} TCP feedback received'
+                    tcp_age = now - feedback['tcp_mono']
+                    if tcp_age > self.observation_timeout:
+                        return None, (
+                            f'{side} TCP feedback is stale ({tcp_age:.3f}s old)')
                 if feedback['joints'] is None:
                     return None, f'no {side} joint feedback received'
                 joint_age = now - feedback['joint_mono']
@@ -729,26 +806,47 @@ class NeroBimanualVlaBridge(Node):
 
                 gripper = 0.0
                 if feedback['gripper_width_m'] is not None:
+                    if self.action_schema == 'joint16':
+                        gripper_age = now - feedback['gripper_mono']
+                        if gripper_age > self.observation_timeout:
+                            return None, (
+                                f'{side} gripper width feedback is stale '
+                                f'({gripper_age:.3f}s old)')
                     gripper = max(0.0, min(
                         1.0, feedback['gripper_width_m'] / self.gripper_max_m))
+                elif self.action_schema == 'joint16':
+                    return None, f'no {side} gripper width feedback received'
                 grippers[side] = gripper
-                pose = [
-                    *feedback['tcp_xyz'],
-                    *feedback['tcp_rotvec'],
-                    gripper,
-                ]
-                pose_by_side[side] = pose
+                gripper_widths[side] = (
+                    float(feedback['gripper_width_m'])
+                    if feedback['gripper_width_m'] is not None else 0.0
+                )
                 joints_by_side[side] = list(feedback['joints'])
-                if self.action_schema == 'rot6d20':
-                    state.extend([
+                if self.action_schema != 'joint16':
+                    pose = [
                         *feedback['tcp_xyz'],
-                        *feedback['tcp_rot6d'],
+                        *feedback['tcp_rotvec'],
                         gripper,
-                    ])
-                else:
-                    state.extend(pose)
-                timestamps[f'{side}_tcp'] = feedback['tcp_stamp']
+                    ]
+                    pose_by_side[side] = pose
+                    if self.action_schema == 'rot6d20':
+                        state.extend([
+                            *feedback['tcp_xyz'],
+                            *feedback['tcp_rot6d'],
+                            gripper,
+                        ])
+                    else:
+                        state.extend(pose)
+                    timestamps[f'{side}_tcp'] = feedback['tcp_stamp']
                 timestamps[f'{side}_joints'] = feedback['joint_stamp']
+
+            if self.action_schema == 'joint16':
+                state = [
+                    *joints_by_side['right'],
+                    *joints_by_side['left'],
+                    gripper_widths['right'],
+                    gripper_widths['left'],
+                ]
 
             images: list[dict[str, Any]] = []
             if require_images:
@@ -769,6 +867,7 @@ class NeroBimanualVlaBridge(Node):
                 'joints': joints_by_side,
                 'pose_by_side': pose_by_side,
                 'grippers': grippers,
+                'gripper_widths': gripper_widths,
                 'timestamps': timestamps,
                 'images': images,
             }, None
@@ -844,6 +943,60 @@ class NeroBimanualVlaBridge(Node):
             applied.extend(self._encode_side_action(filtered))
             clamped = clamped or side_clamped
         return applied, applied_poses, clamped
+
+    def _filter_joint_action(
+        self,
+        action: list[float],
+        joints_by_side: dict[str, list[float]],
+        gripper_widths: dict[str, float],
+    ) -> tuple[list[float], dict[str, list[float]], dict[str, float], bool]:
+        """Filter the native 16-D ``right7 + left7 + widths`` contract.
+
+        Joint limits and per-action steps are enforced on both arms before any
+        target reaches the stream or trajectory path.  Gripper widths remain in
+        metres and are clamped to the configured physical opening.
+        """
+        clamped = False
+        joint_targets: dict[str, list[float]] = {}
+        for offset, side in ((0, 'right'), (7, 'left')):
+            current = joints_by_side[side]
+            target: list[float] = []
+            for index in range(7):
+                value = action[offset + index]
+                bounded = max(
+                    self.joint_position_min[index],
+                    min(self.joint_position_max[index], value),
+                )
+                clamped = clamped or bounded != value
+                delta = bounded - current[index]
+                if abs(delta) > self.max_joint_step:
+                    bounded = current[index] + math.copysign(
+                        self.max_joint_step, delta)
+                    bounded = max(
+                        self.joint_position_min[index],
+                        min(self.joint_position_max[index], bounded),
+                    )
+                    clamped = True
+                target.append(bounded)
+            joint_targets[side] = target
+
+        applied_widths: dict[str, float] = {}
+        for offset, side in ((14, 'right'), (15, 'left')):
+            value = max(0.0, min(self.gripper_max_m, action[offset]))
+            delta = value - gripper_widths[side]
+            if abs(delta) > self.max_gripper_step:
+                value = gripper_widths[side] + math.copysign(
+                    self.max_gripper_step, delta)
+                clamped = True
+            applied_widths[side] = value
+
+        applied = [
+            *joint_targets['right'],
+            *joint_targets['left'],
+            applied_widths['right'],
+            applied_widths['left'],
+        ]
+        return applied, joint_targets, applied_widths, clamped
 
     def _wait_for_future(
         self,
@@ -1348,6 +1501,86 @@ class NeroBimanualVlaBridge(Node):
             snapshot, error = self._observation_snapshot(require_images=False)
             if snapshot is None:
                 return {'ok': False, 'error': error or 'state unavailable'}, b''
+            if self.action_schema == 'joint16':
+                try:
+                    applied, joint_targets, widths, clamped = (
+                        self._filter_joint_action(
+                            action, snapshot['joints'],
+                            snapshot['gripper_widths']))
+                except (TypeError, ValueError) as exc:
+                    return {'ok': False, 'error': str(exc)}, b''
+                with self._lock:
+                    self._last_action_mono = time.monotonic()
+                self._watchdog_fired = False
+                joint_target = [
+                    *joint_targets['left'], *joint_targets['right']]
+                self.get_logger().info(
+                    'Bimanual joint16 action ' +
+                    ' '.join(f'{value:+.4f}' for value in applied) +
+                    (f' (clamped from {action})' if clamped else ''),
+                    throttle_duration_sec=1.0,
+                )
+                if self.execution_mode == 'dry_run':
+                    return {
+                        'ok': True,
+                        'action': applied,
+                        'accepted': True,
+                        'clamped': clamped,
+                        'executed': False,
+                        'mode': self.execution_mode,
+                        'joint_target': joint_target,
+                        'joint_target_by_side': joint_targets,
+                        'gripper_commanded': False,
+                        'gripper_positions': {},
+                        'gripper_error': None,
+                    }, b''
+                if (self.execution_mode in ('trajectory', 'stream')
+                        and self._motion_fault_reason is not None):
+                    return {
+                        'ok': True,
+                        'action': applied,
+                        'accepted': False,
+                        'clamped': clamped,
+                        'executed': False,
+                        'mode': self.execution_mode,
+                        'error': (
+                            'motion fault latched: '
+                            f'{self._motion_fault_reason}'),
+                    }, b''
+                if self.execution_mode == 'ik_dry_run':
+                    result = {
+                        'ok': True,
+                        'action': applied,
+                        'accepted': True,
+                        'clamped': clamped,
+                        'executed': False,
+                        'mode': self.execution_mode,
+                        'joint_target': joint_target,
+                        'joint_target_by_side': joint_targets,
+                        'ik_error_code': MoveItErrorCodes.SUCCESS,
+                    }
+                    result.update(self._send_gripper_widths(widths))
+                    return result, b''
+                sequence = self._queue_joint_target(joint_target)
+                sequence_key = (
+                    'stream_sequence'
+                    if self.execution_mode == 'stream'
+                    else 'trajectory_sequence'
+                )
+                result = {
+                    'ok': True,
+                    'action': applied,
+                    'accepted': True,
+                    'clamped': clamped,
+                    'executed': False,
+                    'queued': True,
+                    'mode': self.execution_mode,
+                    'joint_target': joint_target,
+                    'joint_target_by_side': joint_targets,
+                    sequence_key: sequence,
+                }
+                result.update(self._send_gripper_widths(widths))
+                return result, b''
             try:
                 applied, applied_poses, clamped = self._filter_action(
                     action, snapshot['pose_by_side'])

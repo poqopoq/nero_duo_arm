@@ -90,6 +90,7 @@ class FakeBimanualTrajectoryServer(Node):
 class FakeBimanualFeedback(Node):
     def __init__(self) -> None:
         super().__init__('fake_bimanual_vla_feedback')
+        self.publish_grippers = True
         self.tcp_pubs = {
             side: self.create_publisher(
                 PoseStamped, f'/{side}/feedback/tcp_pose', 10)
@@ -125,9 +126,10 @@ class FakeBimanualFeedback(Node):
             joints.position = [0.0] * 7
             self.joint_pubs[side].publish(joints)
 
-            gripper = Float32()
-            gripper.data = 0.09
-            self.gripper_pubs[side].publish(gripper)
+            if self.publish_grippers:
+                gripper = Float32()
+                gripper.data = 0.09
+                self.gripper_pubs[side].publish(gripper)
 
 
 class FakeGripperCommandSink(Node):
@@ -217,6 +219,18 @@ def _rot6d_action(
     ]
 
 
+def _joint16_action(
+        right_joint1: float = 0.01,
+        left_joint2: float = -0.02,
+        right_width: float = 0.08,
+        left_width: float = 0.07) -> list[float]:
+    return [
+        right_joint1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, left_joint2, 0.0, 0.0, 0.0, 0.0, 0.0,
+        right_width, left_width,
+    ]
+
+
 class BimanualMotionPipelineTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -233,6 +247,7 @@ class BimanualMotionPipelineTest(unittest.TestCase):
         allow_real_motion: bool = False,
         allow_gripper_motion: bool = False,
         schema: str = 'rot6d20',
+        observation_timeout: float = 2.0,
         watchdog_timeout: float = 5.0,
         stream_feedback_timeout: float = 5.0,
         stream_rate_hz: float = 50.0,
@@ -253,7 +268,7 @@ class BimanualMotionPipelineTest(unittest.TestCase):
             Parameter('allow_real_motion', value=allow_real_motion),
             Parameter('gripper_enabled', value=allow_gripper_motion),
             Parameter('allow_gripper_motion', value=allow_gripper_motion),
-            Parameter('observation_timeout_sec', value=2.0),
+            Parameter('observation_timeout_sec', value=observation_timeout),
             Parameter('watchdog_timeout_sec', value=watchdog_timeout),
             Parameter('stop_service_timeout_sec', value=0.01),
             Parameter('stream_command_rate_hz', value=stream_rate_hz),
@@ -329,6 +344,62 @@ class BimanualMotionPipelineTest(unittest.TestCase):
         self.assertEqual(self.trajectory.goals, [])
         self.assertFalse(response['gripper_commanded'])
         self.assertEqual(self.gripper_sink.commands, {'left': [], 'right': []})
+
+    def test_joint16_dry_run_preserves_checkpoint_order(self) -> None:
+        self._start('dry_run', schema='joint16')
+        response = self.client.request(
+            'send_action', action=_joint16_action())
+        self.assertTrue(response['ok'])
+        self.assertTrue(response['accepted'])
+        self.assertEqual(response['mode'], 'dry_run')
+        self.assertEqual(
+            response['joint_target_by_side']['right'][0], 0.01)
+        self.assertEqual(
+            response['joint_target_by_side']['left'][1], -0.02)
+        self.assertAlmostEqual(response['action'][14], 0.08, places=6)
+        self.assertAlmostEqual(response['action'][15], 0.07, places=6)
+        self.assertEqual(self.ik.requests, [])
+        self.assertEqual(self.trajectory.goals, [])
+        self.assertFalse(response['gripper_commanded'])
+
+    def test_joint16_stream_maps_right_left_and_grippers(self) -> None:
+        self._start(
+            'stream',
+            allow_real_motion=True,
+            allow_gripper_motion=True,
+            schema='joint16',
+            stream_rate_hz=20.0,
+        )
+        response = self.client.request(
+            'send_action', action=_joint16_action())
+        self.assertTrue(response['accepted'])
+        self.assertEqual(response['stream_sequence'], 1)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if (
+                self.stream_sink.commands['left']
+                and self.stream_sink.commands['right']
+                and len(self.gripper_sink.commands['left']) >= 1
+                and len(self.gripper_sink.commands['right']) >= 1
+            ):
+                break
+            time.sleep(0.01)
+        self.assertEqual(
+            self.stream_sink.commands['right'][0]['position'][0], 0.01)
+        self.assertEqual(
+            self.stream_sink.commands['left'][0]['position'][1], -0.02)
+        self.assertEqual(self.gripper_sink.commands['right'][0], 110)
+        self.assertEqual(self.gripper_sink.commands['left'][0], 220)
+
+    def test_joint16_rejects_stale_gripper_width(self) -> None:
+        self._start(
+            'dry_run', schema='joint16', observation_timeout=0.2)
+        self.feedback.publish_grippers = False
+        time.sleep(0.35)
+        response = self.client.request(
+            'send_action', action=_joint16_action())
+        self.assertFalse(response['ok'])
+        self.assertIn('gripper width feedback is stale', response['error'])
 
     def test_ik_dry_run_solves_each_arm(self) -> None:
         self._start('ik_dry_run')

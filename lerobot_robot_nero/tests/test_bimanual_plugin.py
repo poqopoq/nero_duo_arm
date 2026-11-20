@@ -132,6 +132,21 @@ class NeroBimanualPluginTest(unittest.TestCase):
         self.assertEqual(robot.observation_features['side'], (48, 64, 3))
         self.assertEqual(robot.robot_type, 'bi_rdt_gripper')
 
+    def test_joint16_feature_order_matches_robotwin_checkpoint(self) -> None:
+        expected = (
+            'right_nero_joint_1', 'right_nero_joint_2', 'right_nero_joint_3',
+            'right_nero_joint_4', 'right_nero_joint_5', 'right_nero_joint_6',
+            'right_nero_joint_7',
+            'left_nero_joint_1', 'left_nero_joint_2', 'left_nero_joint_3',
+            'left_nero_joint_4', 'left_nero_joint_5', 'left_nero_joint_6',
+            'left_nero_joint_7',
+            'right_gripper_width', 'left_gripper_width',
+        )
+        self.assertEqual(state_names('joint16'), expected)
+        robot = NeroBimanual(NeroBimanualConfig(action_schema='joint16'))
+        self.assertEqual(tuple(robot.action_features), expected)
+        self.assertEqual(tuple(robot.observation_features)[:16], expected)
+
     def test_closed_loop(self) -> None:
         with MockBimanualBridge() as bridge:
             config = NeroBimanualConfig(

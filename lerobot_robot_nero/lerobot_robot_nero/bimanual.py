@@ -27,7 +27,14 @@ def _pose_names(side: str, schema: str) -> tuple[str, ...]:
 
 
 def state_names(schema: str) -> tuple[str, ...]:
-    """Return the 20-D rot6d or 14-D axis-angle action ordering."""
+    """Return the action ordering for the selected bridge schema."""
+    if schema == 'joint16':
+        return (
+            *(f'right_nero_joint_{index}' for index in range(1, 8)),
+            *(f'left_nero_joint_{index}' for index in range(1, 8)),
+            'right_gripper_width',
+            'left_gripper_width',
+        )
     return (*_pose_names('left', schema), *_pose_names('right', schema))
 
 
@@ -35,9 +42,10 @@ class NeroBimanual(Robot):
     """A bimanual absolute end-effector robot using two NERO arms.
 
     The plugin talks to ``dual_nero_bimanual_vla_bridge`` over a local Unix
-    socket and never imports ``rclpy``.  All action feature names end in
-    ``.pos`` so the stock LeRobot 0.6 ``lerobot-rollout`` pipeline routes every
-    dimension into the policy action tensor.
+    socket and never imports ``rclpy``.  End-effector action feature names end
+    in ``.pos`` so the stock LeRobot 0.6 ``lerobot-rollout`` pipeline routes
+    every dimension into the policy action tensor.  The optional ``joint16``
+    schema instead uses the checkpoint's native joint/gripper names.
     """
 
     config_class = NeroBimanualConfig

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from lerobot.robots import RobotConfig
 
 
-ACTION_SCHEMAS = ('rot6d20', 'axis_angle14')
+ACTION_SCHEMAS = ('rot6d20', 'axis_angle14', 'joint16')
 
 
 @RobotConfig.register_subclass('nero_bimanual_ros')
@@ -18,6 +18,10 @@ class NeroBimanualConfig(RobotConfig):
     - ``rot6d20``: Xense UMI layout, two 10-D blocks with rotation-matrix
       first two columns.
     - ``axis_angle14``: two 7-D absolute axis-angle blocks.
+    - ``joint16``: right 7 joints, left 7 joints, right gripper width in
+      metres, left gripper width in metres.  This is the native RoboTwin NERO
+      joint contract used by the ``pi05_place_apple_box_staged_joint16``
+      checkpoint.
 
     The camera keys default to the Xense LeRobot dataset names.  Change them
     when the checkpoint uses different ``observation.images.*`` names.
