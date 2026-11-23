@@ -13,7 +13,8 @@
 - [Web 控制台](docs/11_stage8_webapp.md) — 启动、安全顺序、相机
 - [使用手册与命令速查](docs/12_usage_and_commands.md) — 日常命令入口
 - [RoboTwin joint16 真机部署](docs/20_robotwin_joint16_real.md) — 16-D 关节 checkpoint、server/client 和验收顺序
-- [夹爪与 ZQWL-CANFD](docs/17_gripper_can_diagnostics.md) — 协议、TCP/开度标定、验收
+- [OmniPicker 3 与 CAN FD](docs/17_omnipicker3_canfd.md) — 官方协议、ZQWL/SocketCAN、ROS 2 接口
+- [旧 CTAG2F90-D 夹爪记录](docs/17_gripper_can_diagnostics.md) — 迁移前硬件资料
 - [夹爪六维力传感器](docs/18_gripper_ft_sensor.md) — UART 协议、ROS 2 接口
 - [项目交接](PROJECT_HANDOFF.md) — 当前状态、映射、快速复验
 

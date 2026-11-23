@@ -140,17 +140,17 @@ ros2 launch dual_nero_webapp webapp.launch.py \
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=5 auto_enable:=false \
-  tcp_offset:='[0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 
 # 真机运动：上电自动使能；恢复使用小步位置序列，不修改 speed_percent
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=40 auto_enable:=true \
   recover_joint_limits:=true recover_joint_limits_delay_sec:=8.0 \
-  tcp_offset:='[0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 ```
 
-`tcp_offset` 默认已是 CTAG2F90D 捏合点；显式写出是为了和部署记录对齐。
+`tcp_offset` 默认已切换到 OmniPicker 3 官方网格得到的估计值；机械安装后仍需枢轴标定并显式覆盖。
 更换夹爪或修改 `*_tcp_z` 后必须同步调整，否则驱动 `tcp_pose` 与 MoveIt
 `*_tcp_link` 不一致，IK 会选到错误分支。
 
@@ -224,11 +224,13 @@ ros2 launch dual_nero_webapp webapp.launch.py
 | `http_host` / `http_port` | `0.0.0.0` / `8080` | Web app 监听地址和端口 |
 | `enable_cameras` | `true` | 是否订阅相机 |
 | `gripper_allow_motion` | `false` | 是否允许夹爪真实运动 |
-| `gripper_enable_motor` | `false` | 启动时是否使能夹爪 |
-| `gripper_speed_percent` | `25` | 夹爪速度 `1..100%` |
-| `gripper_ramp_ms` | `200` | 加速度斜坡 `0..1000 ms` |
-| `gripper_max_current` | `200` | 最大电流软限位 `1..1000` |
-| `gripper_command_max` | `990` | 闭合命令上限 |
+| `gripper_enable_motor` | `false` | 启动时启用 OP3 命令流；电机由固件自动使能 |
+| `gripper_transport` | `zqwl` | `zqwl` 或 `socketcan` |
+| `gripper_can_interface` | `can1` | SocketCAN 模式下右夹爪接口 |
+| `gripper_can_fd` / `gripper_brs` | `true` / `true` | OP3 CAN FD 与 5Mbps 数据相位 |
+| `gripper_speed_percent` | `50` | OP3 Vel 字节 `1..100%` |
+| `gripper_torque_percent` | `100` | OP3 Force 字节 `1..100%`，不是 N/Nm 反馈 |
+| `gripper_command_max` | `1000` | 闭合命令上限；`0` 张开 |
 
 ## 3. 推荐操作顺序
 
@@ -349,7 +351,51 @@ curl -s -X POST "$BASE/api/gripper" \
 WebSocket：`ws://<机器人IP>:8080/ws`，约 10 Hz 推送状态。除非开发客户端，
 优先使用 UI 或 REST。
 
-## 5. ROS 检查
+## 5. VLA 推理（joint16）
+
+WebApp 首页的 **Inference** 面板直接管理交互式 rollout：**Launch** 只加载模型和
+硬件并停在交互提示，**Run** 才发送 `/start`。详细现场流程见
+`deployment/docs/20_robotwin_joint16_real.md`。
+
+```bash
+# 查询状态、任务、bridge fault 和最近日志
+curl -s "$BASE/api/inference" | python3 -m json.tool
+
+# 启动 rollout（不发送 /start）
+curl -s -X POST "$BASE/api/inference/launch" \
+  -H 'Content-Type: application/json' \
+  -d '{"task":"Use the right arm to put apple into white box."}'
+
+# 确认现场安全后启动策略
+curl -s -X POST "$BASE/api/inference/start" \
+  -H 'Content-Type: application/json' -d '{"confirm":true}'
+
+# 修改任务，从下一次策略推理生效
+curl -s -X POST "$BASE/api/inference/task" \
+  -H 'Content-Type: application/json' \
+  -d '{"task":"Use the right arm to put apple into white box."}'
+
+# 暂停推理并回到 joint16 训练 home（14 关节 + 2 夹爪宽度）
+curl -s -X POST "$BASE/api/inference/reset" \
+  -H 'Content-Type: application/json' -d '{"confirm":true}'
+
+# 停止推理
+curl -s -X POST "$BASE/api/inference/stop" \
+  -H 'Content-Type: application/json' -d '{}'
+
+# inference 已停止时，用 MoveIt 同步把两臂送到训练 home
+curl -s -X POST "$BASE/api/inference/home" \
+  -H 'Content-Type: application/json' -d '{"confirm":true}'
+
+# inference 已停止后清除 bridge latched fault
+curl -s -X POST "$BASE/api/inference/clear_fault" \
+  -H 'Content-Type: application/json' -d '{"confirm":true}'
+```
+
+推理进程存活时，手动 `/api/move`、`/api/park`、门、电机、夹爪和恢复接口都会被
+拒绝；E-stop 和 Stop both 始终可用，并会先请求停止 inference。
+
+## 6. ROS 检查
 
 ```bash
 ros2 node list
@@ -410,7 +456,7 @@ ros2 service call /left/emergency_stop std_srvs/srv/Empty "{}"
 J2 下限 `-1.760000` 是唯一保留的项目放宽项。其余限位等于或严于 NERO 原生值；
 J4 上限 `2.14` 是部署保守限幅（原生 `2.146755`），不是原生上限。
 
-## 6. 相机
+## 7. 相机
 
 ```bash
 ros2 launch dual_nero_cameras all_cameras.launch.py
@@ -534,7 +580,7 @@ ros2 run dual_nero_calibration solve_extrinsics \
 场景相机还需要先把实测的 `board_pose_in_world` 写入
 `config/calibration_targets.yaml`；三路相机没有全部在线时不要继续发布旧外参。
 
-## 7. Park 与复位
+## 8. Park 与复位
 
 上电后先执行上文的 `recover_joint_limits.sh`，再进入整体复位/Park；两者不要
 同时运行，且都要求工作区清空和现场监护。
@@ -549,7 +595,7 @@ cd /home/work/nero_duo_arm
 脚本自行启停驱动和 MoveIt，执行前关闭 Web app 和其他控制进程。支撑位数值和
 安全规则见 `03_moveit_and_park.md`。
 
-## 8. 验收与开发脚本
+## 9. 验收与开发脚本
 
 先关闭 Web app 和已有 MoveIt，只保留脚本需要的前置进程。
 
@@ -603,13 +649,13 @@ ros2 run dual_nero_calibration calibrate_gripper_tcp \
 # 卡尺测得至少两组 RAW_POSITION=OPENING_MM
 ros2 run dual_nero_calibration calibrate_gripper_opening \
   --side right \
-  --measurement 0=89.4 --measurement 250=67.2 \
-  --measurement 500=45.1 --measurement 750=22.7
+  --measurement 0=OPENING_MM --measurement 250=OPENING_MM \
+  --measurement 500=OPENING_MM --measurement 750=OPENING_MM
 ```
 
 TCP 结果必须同步到驱动 `tcp_offset` 和 URDF `*_tcp_x/y/z`，否则驱动
 `tcp_pose`、MoveIt `*_tcp_link` 和 VLA 动作坐标会互相不一致。详见
-`17_gripper_can_diagnostics.md` 第 11、12 节。
+`17_omnipicker3_canfd.md`。更换为 OP3 后必须重新测量 120 mm 行程和 TCP；旧 CTAG 的采集流程见 `17_gripper_can_diagnostics.md`。
 
 夹爪六维力传感器：
 
@@ -629,14 +675,14 @@ sg dialout -c '/usr/bin/python3 \
   deployment/scripts/identify_gripper_ft_sensors.py'
 ```
 
-## 9. UMI 与 VLA
+## 10. UMI 与 VLA
 
 - UMI 转换、回读、上传和训练：`04_umi_lerobot.md`
 - 单臂/双臂 VLA bridge、policy server、robot client：`05_vla_pipeline.md`
-- 夹爪协议、只读启动和验收：`17_gripper_can_diagnostics.md`
+- OmniPicker 3 协议、CAN FD 配置、只读启动和验收：`17_omnipicker3_canfd.md`
 - 夹爪六维力传感器与 ROS 2 接口：`18_gripper_ft_sensor.md`
 
-## 10. 常见问题
+## 11. 常见问题
 
 ### 页面 `disconnected`
 
@@ -685,7 +731,7 @@ ros2 topic echo --once /camera_left_wrist/color/camera_info
 
 检查序列号、USB 速率、话题名和相机参数。
 
-## 11. 尚未实现
+## 12. 尚未实现
 
 - 相机点云、OctoMap、动态障碍和 planning scene 编辑。
 - Cartesian/IK/命名位姿目标和浏览器轨迹预览。

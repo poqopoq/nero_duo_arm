@@ -779,7 +779,7 @@ ros2 topic pub --once /right_gripper/position_cmd std_msgs/msg/Int32 "{data: 0}"
 ros2 topic echo --once /right_gripper/position
 ```
 
-再依次测试 `250`、`500`、`750`、`990` 等位置。建议至少 4 组，且覆盖
+再依次测试 `250`、`500`、`750`、`1000` 等位置。建议至少 4 组，且覆盖
 工作区间；不要只取两个相邻点。
 
 记录成：
@@ -793,10 +793,10 @@ RAW_POSITION=OPENING_MM
 ```bash
 ros2 run dual_nero_calibration calibrate_gripper_opening \
   --side right \
-  --measurement 0=89.4 \
-  --measurement 250=67.2 \
-  --measurement 500=45.1 \
-  --measurement 750=22.7
+  --measurement 0=OPENING_MM \
+  --measurement 250=OPENING_MM \
+  --measurement 500=OPENING_MM \
+  --measurement 750=OPENING_MM
 ```
 
 上面的数字只是格式示例，必须替换成本次卡尺实测值。输出文件：

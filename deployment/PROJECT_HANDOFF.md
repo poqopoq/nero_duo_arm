@@ -1,6 +1,6 @@
 # Dual NERO 项目交接
 
-> 更新：2026-11-04
+> 更新：2026-11-23
 >
 > 环境：原生 Ubuntu 22.04.5 + ROS 2 Humble
 > 工作区：`/home/work/nero_duo_arm`
@@ -41,7 +41,7 @@ world: 桌面平面、两基座中心中点，+X 指向桌内，+Y 指向左
 left base:  xyz=[0, +0.30, 0], yaw=pi
 right base: xyz=[0, -0.30, 0], yaw=pi
 基座中心距: 0.60 m
-TCP: tool0 沿工具轴 +0.2133 m；夹爪闭合总长 0.265 m
+TCP: tool0 沿工具轴 +0.1725 m（OP3 网格估计）；OP3 闭合外高约 0.153 m
 ```
 
 ## 3. 当前状态
@@ -53,14 +53,19 @@ TCP: tool0 沿工具轴 +0.2133 m；夹爪闭合总长 0.265 m
 - 双臂 MoveIt 规划、碰撞检查、轨迹桥 dry-run、单臂/双臂真机低速执行。
 - 真实轨迹取消联锁、稳定 park pose 复位与失能验证。
 - 三路 Color `640×480@30` 短测和 Web app 端到端接口。
-- 夹爪只读反馈、真实开合、MoveIt `GripperCommand` 小幅往返。
-- 夹爪空载 10×10 位置/速度 `200/200`、低速软件急停 `4/4`。
+- 旧 CTAG 夹爪只读反馈、真实开合、MoveIt `GripperCommand` 小幅往返。
+- 旧 CTAG 夹爪空载 10×10 位置/速度 `200/200`、低速软件急停 `4/4`。
+- 默认 ROS 2 夹爪入口已切换为 OmniPicker 3 CAN FD；官方控制帧、1M/5M
+  BRS、只读位置查询、ZQWL/SocketCAN 后端和 ROS 兼容接口已实现。
+- 官网 OP3 URDF/网格已集成，MoveIt 主关节改为 `*_op3_wide1_joint`，
+  其余七个指节由 mimic 跟随；默认 TCP 使用 0.1725 m 网格估计。
 - 单臂/双臂 VLA bridge 的 dry-run、IK 干跑和假 action server 测试。
 - 相机外参求解的合成数据测试：固定相机与 eye-in-hand 均通过。
 - 夹爪实物 TCP 枢轴标定工具、开度拟合工具及其单元测试。
 
 仍未验收：
 
+- OmniPicker 3 真机只读反馈、真实开合、ID 冲突、CAN FD 掉线和急停边界。
 - 带载抓取、真实堵塞清障、长时热稳定、夹爪 CAN 掉线恢复。
 - 夹爪实物 TCP 标定、D435 USB3 下正式 10 分钟稳定性。
 - Web/MoveIt 全链路真机联锁、真实 SmolVLA checkpoint 整链路。
@@ -89,11 +94,11 @@ ros2 run dual_nero_calibration calibrate_gripper_tcp \
 
 ```bash
 ros2 run dual_nero_calibration calibrate_gripper_opening \
-  --side right --measurement 0=89.4 --measurement 500=45.1
+  --side right --measurement 0=OPENING_MM --measurement 500=OPENING_MM
 ```
 
 详细安全和验收步骤见 `docs/02_sensors_and_calibration.md` 与
-`docs/17_gripper_can_diagnostics.md` 第 11、12 节。标定结果只是数据，必须人工
+`docs/17_gripper_can_diagnostics.md` 第 11、12 节（旧 CTAG 工具）；更换 OmniPicker 3 后须按 `docs/17_omnipicker3_canfd.md` 重新标定。标定结果只是数据，必须人工
 同步驱动 `tcp_offset` 和 URDF `*_tcp_x/y/z` 后才进入 MoveIt/VLA 链路。
 
 ## 4. 安全状态
@@ -150,5 +155,6 @@ docs/04_umi_lerobot.md                UMI 转 LeRobot、训练数据
 docs/05_vla_pipeline.md               单臂/双臂 VLA 链路
 docs/11_stage8_webapp.md              Web 控制台
 docs/12_usage_and_commands.md         使用手册与命令速查
-docs/17_gripper_can_diagnostics.md    夹爪协议与验收
+docs/17_omnipicker3_canfd.md         OmniPicker 3 CAN FD、ROS 2 接口与验收
+docs/17_gripper_can_diagnostics.md   旧 CTAG 夹爪协议与验收
 ```

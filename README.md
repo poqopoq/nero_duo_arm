@@ -1,15 +1,15 @@
 # Dual NERO Deployment
 
-ROS 2 Humble deployment workspace for two AgileX NERO 7-DoF arms with table mounting, dual-arm MoveIt planning, RealSense integration, software emergency-stop procedures, and camera calibration tooling.
+ROS 2 Humble deployment workspace for two AgileX NERO 7-DoF arms with table mounting, dual-arm MoveIt planning, RealSense integration, OmniPicker 3 CAN-FD control and URDF, software emergency-stop procedures, and camera calibration tooling.
 
 ## Repository layout
 
 ```text
 ros2_ws/src/
   agx_arm_ros/                 # official AgileX driver submodule
-  dual_nero_description/       # table-mounted dual-arm model
+  dual_nero_description/       # dual NERO + official OmniPicker 3 URDF and meshes
   dual_nero_cameras/           # RealSense launch configuration
-  dual_nero_control/           # MoveIt FollowJointTrajectory bridge
+  dual_nero_control/           # trajectory bridge and OmniPicker 3 ROS 2 driver
   dual_nero_moveit_config/     # dual-arm MoveIt configuration
   dual_nero_calibration/       # camera extrinsics + gripper TCP/opening calibration
   dual_nero_gripper_ft_sensor/ # gripper six-axis force/torque UART driver
@@ -74,6 +74,7 @@ deployment/docs/04_umi_lerobot.md
 deployment/docs/05_vla_pipeline.md
 deployment/docs/11_stage8_webapp.md
 deployment/docs/12_usage_and_commands.md
+deployment/docs/17_omnipicker3_canfd.md
 deployment/docs/17_gripper_can_diagnostics.md
 deployment/docs/18_gripper_ft_sensor.md
 ```
