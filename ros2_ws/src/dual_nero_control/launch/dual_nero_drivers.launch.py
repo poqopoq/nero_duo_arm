@@ -30,10 +30,11 @@ def _resolve_recover_script() -> Path:
         f'{launch_file}; set NERO_RECOVER_JOINT_LIMITS_SCRIPT to override')
 
 
-# link7 -> CTAG2F90D pinch point is the same transform the URDF applies through
-# link7 -> tool0 -> tcp_link. The 213.3 mm tool-axis offset includes the 42.5 mm
-# force-sensor/connector stack. Keep this in sync with the URDF defaults.
-DEFAULT_TCP_OFFSET = '[0.2443, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+# link7 -> OmniPicker 3 pinch point is the same transform the URDF applies
+# through link7 -> tool0 -> tcp_link. The 172.5 mm tool-axis estimate includes
+# the 42.5 mm sensor/connector stack and the official mesh's 130 mm pad midpoint.
+# Replace it with a pivot calibration before using robot TCP data.
+DEFAULT_TCP_OFFSET = '[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 RECOVER_SCRIPT = _resolve_recover_script()
 
 
@@ -53,6 +54,7 @@ def _nodes(context):
         'arm_type': 'nero',
         'effector_type': 'none',
         'auto_enable': LaunchConfiguration('auto_enable'),
+        'fast_mode': LaunchConfiguration('fast_mode'),
         'speed_percent': LaunchConfiguration('speed_percent'),
         'control_enabled': False,
         'pub_rate': 200,
@@ -92,12 +94,13 @@ def generate_launch_description():
         DeclareLaunchArgument('can_right', default_value='can_right'),
         DeclareLaunchArgument('speed_percent', default_value='5'),
         DeclareLaunchArgument('auto_enable', default_value='true'),
+        DeclareLaunchArgument('fast_mode', default_value='false'),
         DeclareLaunchArgument(
             'tcp_offset',
             default_value=DEFAULT_TCP_OFFSET,
             description=(
                 'TCP offset from link7 as [x, y, z, roll, pitch, yaw] '
-                'in metres/radians. Defaults to the CTAG2F90D pinch point.'
+                'in metres/radians. Defaults to the OmniPicker 3 mesh-based pinch-point estimate; calibrate on hardware.'
             ),
         ),
         DeclareLaunchArgument(

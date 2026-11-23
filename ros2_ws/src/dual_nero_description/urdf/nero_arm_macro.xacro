@@ -8,8 +8,8 @@
 
     src/agx_arm_description/agx_arm_urdf/nero/urdf/nero_description.urdf
       - base_link, link1..link7, joint1..joint7
-  When include_gripper is true, the CRT CTAG2F90D 90 mm gripper macro is
-  attached to link7 at the NERO tool flange.
+  When include_gripper is true, the official AGILINK OmniPicker 3 mesh and
+  URDF are attached to link7 through the six-axis sensor/connector stack.
 
   Upstream files are left untouched so `git pull upstream` stays conflict-
   free. Mesh paths reference the upstream `agx_arm_description` package
@@ -23,7 +23,7 @@
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:include filename="$(find dual_nero_description)/urdf/crt_ctag2f90d_gripper_macro.xacro"/>
+  <xacro:include filename="$(find dual_nero_description)/urdf/omnipicker3_gripper_macro.xacro"/>
 
   <xacro:macro name="nero_arm" params="prefix parent include_gripper *origin">
 
@@ -256,9 +256,9 @@
     </joint>
 
     <xacro:if value="${include_gripper}">
-      <xacro:crt_ctag2f90d_gripper prefix="${prefix}" parent="${prefix}link7">
+      <xacro:omnipicker3_gripper prefix="${prefix}" parent="${prefix}link7">
         <origin xyz="0.031 0 -0.0235" rpy="3.1415927 -1.5707963 0"/>
-      </xacro:crt_ctag2f90d_gripper>
+      </xacro:omnipicker3_gripper>
     </xacro:if>
 
   </xacro:macro>

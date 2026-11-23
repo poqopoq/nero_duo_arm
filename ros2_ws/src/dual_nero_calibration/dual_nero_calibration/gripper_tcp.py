@@ -14,7 +14,7 @@ from .common import invert_transform, transform_from_xyz_rpy
 LINK7_TO_TOOL0_XYZ = (0.031, 0.0, -0.0235)
 LINK7_TO_TOOL0_RPY = (-1.5708, 0.0, -1.5708)
 
-# Orientation of the CTAG2F90-D pinch frame relative to link7.  A pivot
+# Orientation of the OmniPicker 3 pinch frame relative to link7.  A pivot
 # calibration solves translation only; keep the already deployed orientation.
 DEFAULT_TCP_RPY = (-1.5708, 0.0, -1.5708)
 

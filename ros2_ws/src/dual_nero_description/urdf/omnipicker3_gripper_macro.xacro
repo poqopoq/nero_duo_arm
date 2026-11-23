@@ -1,0 +1,353 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    AGILINK OmniPicker 3, based on the official robot_description URDF from
+    https://www.agibot.com/DOCS/OS/omnipicker-manual (Appendix / URDF).
+
+    The remaining seven revolute finger/loop joints are coupled through a
+    mimic to the single master ROS actuator joint (wide1).  q=0 is the official
+    closed pose (about 88.1 x 153 mm); q=0.39 is the documented open pose
+    (about 125 mm wide).  Exact finger deformation at contact is adaptive and
+    still requires physical calibration.
+  -->
+  <!--
+    Installation geometry retained from the deployed tool stack:
+    NERO flange -> 25 mm six-axis sensor -> 17.5 mm connector -> OP3 base.
+    The official OP3 mesh starts at the circular mounting face.
+  -->
+  <xacro:property name="op3_ft_sensor_length" value="0.025" />
+  <xacro:property name="op3_connector_length" value="0.0175" />
+  <xacro:property name="op3_joint_open" value="0.39" />
+  <material name="op3_body_grey">
+    <color rgba="0.89804 0.91765 0.92941 1" />
+  </material>
+  <material name="op3_finger_grey">
+    <color rgba="0.75294 0.75294 0.75294 1" />
+  </material>
+  <material name="op3_sensor_dark">
+    <color rgba="0.18 0.19 0.21 1" />
+  </material>
+  <material name="op3_connector_black">
+    <color rgba="0.08 0.08 0.09 1" />
+  </material>
+  <xacro:macro name="omnipicker3_gripper" params="prefix parent ft_sensor_length:=0.025 connector_length:=0.0175 pinch_offset:=0.130 *origin">
+    <joint name="${prefix}op3_mount_joint" type="fixed">
+      <xacro:insert_block name="origin" />
+      <parent link="${parent}" />
+      <child link="${prefix}op3_ft_sensor_link" />
+    </joint>
+    <link name="${prefix}op3_ft_sensor_link">
+      <inertial>
+        <origin xyz="0 0 ${ft_sensor_length / 2.0}" rpy="0 0 0" />
+        <mass value="0.22" />
+        <inertia ixx="7.88e-05" ixy="0" ixz="0" iyy="7.88e-05" iyz="0" izz="1.35e-04" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 ${ft_sensor_length / 2.0}" rpy="0 0 0" />
+        <geometry>
+          <cylinder radius="0.0325" length="${ft_sensor_length}" />
+        </geometry>
+        <material name="op3_sensor_dark" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${ft_sensor_length / 2.0}" rpy="0 0 0" />
+        <geometry>
+          <cylinder radius="0.0325" length="${ft_sensor_length}" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_sensor_to_connector_joint" type="fixed">
+      <origin xyz="0 0 ${ft_sensor_length}" rpy="0 0 0" />
+      <parent link="${prefix}op3_ft_sensor_link" />
+      <child link="${prefix}op3_connector_link" />
+    </joint>
+    <link name="${prefix}op3_connector_link">
+      <inertial>
+        <origin xyz="0 0 ${connector_length / 2.0}" rpy="0 0 0" />
+        <mass value="0.12" />
+        <inertia ixx="4.53e-05" ixy="0" ixz="0" iyy="4.53e-05" iyz="0" izz="8.45e-05" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 ${connector_length / 2.0}" rpy="0 0 0" />
+        <geometry>
+          <box size="0.065 0.065 ${connector_length}" />
+        </geometry>
+        <material name="op3_connector_black" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${connector_length / 2.0}" rpy="0 0 0" />
+        <geometry>
+          <box size="0.065 0.065 ${connector_length}" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_connector_to_base_joint" type="fixed">
+      <origin xyz="0 0 ${connector_length}" rpy="0 0 0" />
+      <parent link="${prefix}op3_connector_link" />
+      <child link="${prefix}op3_base_link" />
+    </joint>
+    <link name="${prefix}op3_base_link">
+      <inertial>
+        <origin xyz="-0.00005520 1.2341E-05 0.03296193" rpy="0 0 0" />
+        <mass value="0.25641368" />
+        <inertia ixx="4.6351E-04" ixy="-1.0E-08" ixz="-1.04E-06" iyy="4.4525E-04" iyz="-5.00E-08" izz="1.0438E-04" />
+      </inertial>
+      <visual>
+        <origin rpy="0 0 0" xyz="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/base_link.STL" />
+        </geometry>
+        <material name="op3_body_grey" />
+      </visual>
+      <collision>
+        <origin rpy="0 0 0" xyz="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/base_link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <link name="${prefix}op3_narrow1_link">
+      <inertial>
+        <origin xyz="0.0094685 0.0068806 6.5437E-05" rpy="0 0 0" />
+        <mass value="0.025428" />
+        <inertia ixx="1.9574E-06" ixy="-4.2911E-07" ixz="-3.7111E-11" iyy="2.3919E-06" iyz="-3.008E-10" izz="1.5501E-06" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow1_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow1_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_narrow1_joint" type="revolute">
+      <origin xyz="0 -0.0195 0.0565" rpy="-2.9951 -1.5708 -0.15964" />
+      <parent link="${prefix}op3_base_link" />
+      <child link="${prefix}op3_narrow1_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+      <mimic joint="${prefix}op3_wide1_joint" multiplier="1" offset="0" />
+    </joint>
+    <link name="${prefix}op3_narrow2_link">
+      <inertial>
+        <origin xyz="0.0088027 -0.007035 1.6424E-05" rpy="0 0 0" />
+        <mass value="0.0040132" />
+        <inertia ixx="1.0307E-07" ixy="5.7851E-08" ixz="9.5801E-11" iyy="1.1385E-07" iyz="-2.81E-11" izz="1.7009E-07" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow2_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow2_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_narrow2_joint" type="revolute">
+      <origin xyz="0.030852 0.018551 0" rpy="0 0 0" />
+      <parent link="${prefix}op3_narrow1_link" />
+      <child link="${prefix}op3_narrow2_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+      <mimic joint="${prefix}op3_wide1_joint" multiplier="1" offset="0" />
+    </joint>
+    <link name="${prefix}op3_narrow3_link">
+      <inertial>
+        <origin xyz="0.012508 -0.0079729 9.4339E-05" rpy="0 0 0" />
+        <mass value="0.018029" />
+        <inertia ixx="1.1403E-06" ixy="5.5159E-07" ixz="-4.0096E-13" iyy="2.5704E-06" iyz="1.0951E-12" izz="2.3252E-06" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow3_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow3_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_narrow3_joint" type="revolute">
+      <origin xyz="0.018118 -0.01574 0" rpy="0 0 0" />
+      <parent link="${prefix}op3_narrow2_link" />
+      <child link="${prefix}op3_narrow3_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+      <mimic joint="${prefix}op3_wide1_joint" multiplier="1" offset="0" />
+    </joint>
+    <link name="${prefix}op3_narrow4_link">
+  </link>
+    <joint name="${prefix}op3_narrow4_joint" type="fixed">
+      <origin xyz="0 -0.0104 0" rpy="0 0 0" />
+      <parent link="${prefix}op3_narrow3_link" />
+      <child link="${prefix}op3_narrow4_link" />
+    </joint>
+    <link name="${prefix}op3_narrow_loop_link">
+      <inertial>
+        <origin xyz="0.014869 -0.0036066 0.00029307" rpy="0 0 0" />
+        <mass value="0.022591" />
+        <inertia ixx="4.3916E-06" ixy="1.114E-07" ixz="-4.9655E-12" iyy="4.737E-06" iyz="1.7121E-11" izz="6.0445E-07" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow_loop_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/narrow_loop_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_narrow_loop_joint" type="revolute">
+      <origin xyz="0 -0.021633 0.07387" rpy="-2.9951 -1.5708 -0.15964" />
+      <parent link="${prefix}op3_base_link" />
+      <child link="${prefix}op3_narrow_loop_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+      <mimic joint="${prefix}op3_wide1_joint" multiplier="1" offset="0" />
+    </joint>
+    <link name="${prefix}op3_wide1_link">
+      <inertial>
+        <origin xyz="0.0095051 -0.0068479 6.8268E-05" rpy="0 0 0" />
+        <mass value="0.025428" />
+        <inertia ixx="1.9565E-06" ixy="4.2798E-07" ixz="2.3844E-10" iyy="2.3928E-06" iyz="-1.4454E-10" izz="1.5501E-06" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide1_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide1_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_wide1_joint" type="revolute">
+      <origin xyz="0 0.0195 0.0565" rpy="-2.9951 -1.5708 -0.15964" />
+      <parent link="${prefix}op3_base_link" />
+      <child link="${prefix}op3_wide1_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+    </joint>
+    <link name="${prefix}op3_wide2_link">
+      <inertial>
+        <origin xyz="0.0088027 0.007035 -1.6424E-05" rpy="0 0 0" />
+        <mass value="0.0040132" />
+        <inertia ixx="1.0307E-07" ixy="-5.7851E-08" ixz="-9.58E-11" iyy="1.1385E-07" iyz="-2.81E-11" izz="1.7009E-07" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide2_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide2_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_wide2_joint" type="revolute">
+      <origin xyz="0.030852 -0.018551 0" rpy="0 0 0" />
+      <parent link="${prefix}op3_wide1_link" />
+      <child link="${prefix}op3_wide2_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+      <mimic joint="${prefix}op3_wide1_joint" multiplier="1" offset="0" />
+    </joint>
+    <link name="${prefix}op3_wide3_link">
+      <inertial>
+        <origin xyz="0.016206 0.0094593 4.7668E-05" rpy="0 0 0" />
+        <mass value="0.035835" />
+        <inertia ixx="8.5056E-06" ixy="-1.1363E-06" ixz="-4.2908E-11" iyy="1.1235E-05" iyz="-2.9251E-11" izz="4.6309E-06" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide3_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide3_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_wide3_joint" type="revolute">
+      <origin xyz="0.018118 0.01574 0" rpy="0 0 0" />
+      <parent link="${prefix}op3_wide2_link" />
+      <child link="${prefix}op3_wide3_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+      <mimic joint="${prefix}op3_wide1_joint" multiplier="1" offset="0" />
+    </joint>
+    <link name="${prefix}op3_wide4_link">
+  </link>
+    <joint name="${prefix}op3_wide4_joint" type="fixed">
+      <origin xyz="0 0.0104 0" rpy="0 0 0" />
+      <parent link="${prefix}op3_wide3_link" />
+      <child link="${prefix}op3_wide4_link" />
+    </joint>
+    <link name="${prefix}op3_wide_loop_link">
+      <inertial>
+        <origin xyz="0.016268 0.0040555 0.00030323" rpy="0 0 0" />
+        <mass value="0.025142" />
+        <inertia ixx="5.887E-06" ixy="-1.1234E-07" ixz="2.1954E-11" iyy="6.236E-06" iyz="-9.473E-12" izz="6.2389E-07" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide_loop_Link.STL" />
+        </geometry>
+        <material name="op3_finger_grey" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="package://dual_nero_description/meshes/omnipicker3/wide_loop_Link.STL" />
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${prefix}op3_wide_loop_joint" type="revolute">
+      <origin xyz="0 0.021633 0.07387" rpy="-2.9951 -1.5708 -0.15964" />
+      <parent link="${prefix}op3_base_link" />
+      <child link="${prefix}op3_wide_loop_link" />
+      <axis xyz="0 0 -1" />
+      <limit lower="0" upper="${op3_joint_open}" effort="20" velocity="1.0" />
+      <mimic joint="${prefix}op3_wide1_joint" multiplier="1" offset="0" />
+    </joint>
+    <link name="${prefix}op3_tcp_link" />
+    <joint name="${prefix}op3_tcp_joint" type="fixed">
+      <origin xyz="0 0 ${pinch_offset}" rpy="0 0 0" />
+      <parent link="${prefix}op3_base_link" />
+      <child link="${prefix}op3_tcp_link" />
+    </joint>
+  </xacro:macro>
+</robot>

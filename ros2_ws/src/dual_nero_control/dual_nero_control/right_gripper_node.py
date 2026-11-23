@@ -1,5 +1,9 @@
 #!/usr/bin/python3
-"""ROS 2 driver for a CTAG2F90-D gripper over a ZQWL adapter."""
+"""Legacy ROS 2 driver for CTAG2F90-D over a ZQWL adapter.
+
+The default left_gripper_node/right_gripper_node entry points use
+omnipicker_node.py; this module remains available as ctag_*_gripper_node.
+"""
 from __future__ import annotations
 
 import math

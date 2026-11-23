@@ -23,8 +23,12 @@ setup(
         'console_scripts': [
             'trajectory_bridge = dual_nero_control.trajectory_bridge:main',
             'zqwl_canfd_probe = dual_nero_control.zqwl_canfd_probe:main',
-            'right_gripper_node = dual_nero_control.right_gripper_node:main',
-            'left_gripper_node = dual_nero_control.right_gripper_node:left_main',
+            # Default ROS entry points now drive AGILINK OmniPicker 3 over CAN FD.
+            'right_gripper_node = dual_nero_control.omnipicker_node:main',
+            'left_gripper_node = dual_nero_control.omnipicker_node:left_main',
+            # Keep the former CTAG2F90-D driver available for hardware migration.
+            'ctag_right_gripper_node = dual_nero_control.right_gripper_node:main',
+            'ctag_left_gripper_node = dual_nero_control.right_gripper_node:left_main',
         ],
     },
 )

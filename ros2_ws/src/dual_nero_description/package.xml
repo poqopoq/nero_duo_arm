@@ -3,7 +3,7 @@
 <package format="3">
   <name>dual_nero_description</name>
   <version>0.1.0</version>
-  <description>Table-mounted dual AgileX NERO robot model.</description>
+  <description>Table-mounted dual AgileX NERO robot model with AGILINK OmniPicker 3.</description>
   <maintainer email="todo@example.com">robot</maintainer>
   <license>Apache-2.0</license>
 

@@ -1,4 +1,4 @@
-"""CTAG2F90-D CAN register protocol and jaw-to-position mapping.
+"""Legacy CTAG2F90-D CAN register protocol and jaw-to-position mapping.
 
 The gripper uses the CFEF-RAP register layout on a 29-bit extended CAN ID:
 

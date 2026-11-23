@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<robot name="omnipicker3" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find dual_nero_description)/urdf/omnipicker3_gripper_macro.xacro"/>
+  <link name="world"/>
+  <link name="op3_mount"/>
+  <joint name="world_to_op3_mount" type="fixed">
+    <parent link="world"/>
+    <child link="op3_mount"/>
+  </joint>
+  <xacro:omnipicker3_gripper prefix="" parent="op3_mount">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:omnipicker3_gripper>
+</robot>

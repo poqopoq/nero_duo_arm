@@ -121,7 +121,7 @@ def test_fixed_camera_recovers_world_to_camera_transform():
 
 def test_pivot_recovers_tcp_translation():
     rng = np.random.default_rng(11)
-    tcp = np.array([0.2443, 0.0, -0.0235])
+    tcp = np.array([0.2035, 0.0, -0.0235])
     pivot = np.array([0.42, -0.11, 0.19])
     transforms = []
     for _ in range(12):
@@ -147,11 +147,11 @@ def test_pivot_rejects_degenerate_orientation_set():
 
 
 def test_default_tcp_matches_urdf_and_driver_contract():
-    tcp_link7 = np.array([0.2443, 0.0, -0.0235])
+    tcp_link7 = np.array([0.2035, 0.0, -0.0235])
     offset = driver_offset(tcp_link7, DEFAULT_TCP_RPY)
     np.testing.assert_allclose(offset[:3, 3], tcp_link7, atol=1e-12)
     urdf = urdf_tcp_origin(tcp_link7, DEFAULT_TCP_RPY)
-    np.testing.assert_allclose(urdf[:3, 3], [0.0, 0.0, 0.2133], atol=1e-6)
+    np.testing.assert_allclose(urdf[:3, 3], [0.0, 0.0, 0.1725], atol=1e-6)
     np.testing.assert_allclose(urdf[:3, :3], np.eye(3), atol=1e-6)
 
 

@@ -1,3 +1,9 @@
+> **Legacy hardware note:** this document and the CTAG-specific calibration
+> modules describe CRT CTAG2F90-D.  The default ROS 2 entry points now use
+> AGILINK OmniPicker 3 over CAN FD.  See
+> [17_omnipicker3_canfd.md](17_omnipicker3_canfd.md) for the current protocol,
+> bit timing, and ROS 2 interface.
+
 # CTAG2F90-D 双夹爪与 ZQWL-CANFD
 
 > 左右各一只 CRT CTAG2F90-D 两指夹爪，经 ZQWL `UCANFD-100E` 单通道
@@ -215,6 +221,12 @@ ros2 service call /right_gripper/enable std_srvs/srv/SetBool "{data: true}"
 ```
 
 最后一条只有 `allow_motion:=true` 时才成功。清故障不会自动使能或运动。
+
+VLA bridge 的普通 `/stop` 不是硬件急停：它只关闭机械臂控制门并停止继续下发
+目标，不会调用夹爪 `emergency_stop`。夹爪急停只在 WebApp 显式急停或直接调用
+`/<side>_gripper/emergency_stop` 时锁存。若策略“机械臂动了但夹爪不闭合”，先看
+`/<side>_gripper/status` 的 `estop_latched` 和 `fault_reason`，再按上面的顺序
+清故障、使能、空载开合验收。
 
 Web 的 `Recover arm` 只复位 NERO 机械臂，不清夹爪故障；夹爪堵转使用该侧
 `Clear obstruction`，流程为停止 → 失能 → 复位硬件报警 → 使能 → 张开。

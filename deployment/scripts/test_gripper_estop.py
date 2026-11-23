@@ -142,7 +142,10 @@ class GripperEstopTest(Node):
         request = SetParameters.Request()
         request.parameters = [
             Parameter('motion_speed_percent', value=speed).to_parameter_msg(),
-            Parameter('motion_ramp_ms', value=200).to_parameter_msg(),
+            Parameter('motion_force_percent', value=100).to_parameter_msg(),
+            Parameter(
+                'motion_acceleration_percent', value=speed
+            ).to_parameter_msg(),
             Parameter('goal_timeout_sec', value=30.0).to_parameter_msg(),
         ]
         response, error = self.call(
@@ -174,7 +177,7 @@ class GripperEstopTest(Node):
 
     def prepare_side(self, side: str, speed: int) -> tuple[bool, str]:
         if not self.wait_until(lambda: self.fresh(side), timeout=5.0):
-            return False, 'no fresh CAN/status/position feedback'
+            return False, 'no read-only CAN/status/position feedback'
         if not self.set_motion_parameters(side, speed):
             return False, 'failed to set motion parameters'
         if self._status(side, 'enabled') == 'true':
@@ -198,11 +201,10 @@ class GripperEstopTest(Node):
         if not self.wait_until(
                 lambda: (
                     self._status(side, 'enabled') == 'true'
-                    and self._status(side, 'enable_register') == '1'
                     and self._status(side, 'state') != 'fault'
                     and self.fresh(side)
                 ),
-                timeout=5.0,
+                timeout=max(5.0, self.timeout_sec),
         ):
             return False, (
                 f'motor did not enable: state={self._status(side, "state")}, '

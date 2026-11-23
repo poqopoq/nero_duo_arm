@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct ZQWL CAN control for the CTAG2F90-D gripper."""
+"""Direct CAN-FD open/close/status tool for AGILINK OmniPicker 3."""
 from __future__ import annotations
 
 import argparse
@@ -15,21 +15,23 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / 'ros2_ws' / 'src' / 'dual_nero_control'))
 
-from dual_nero_control.ctag_gripper import (  # noqa: E402
-    REG_FEEDBACK,
-    REG_MAX_CURRENT,
-    decode_feedback,
-    decode_register_u16,
-    enable_frame,
-    feedback_request_frame,
-    motion_config_frames,
-    motion_frames,
-    register_read_request_frame,
-    scalar_write_frame,
+from dual_nero_control.omnipicker_gripper import (  # noqa: E402
+    DEFAULT_BITRATE,
+    DEFAULT_DATA_BITRATE,
+    STATE_DROPPED,
+    STATE_STALLED,
+    CanTransportError,
+    SocketCanTransport,
+    ZqwlCanTransport,
+    control_frame,
+    decode_position_query,
+    decode_status,
+    position_from_can,
+    position_query_frame,
 )
 from dual_nero_control.zqwl_canfd import (  # noqa: E402
-    CanFrame,
-    ZqwlCanFd,
+    DEFAULT_SERIAL_BAUD,
+    STABLE_PORT,
     ZqwlError,
 )
 
@@ -39,16 +41,15 @@ PORTS = {
         '/dev/serial/by-id/'
         'usb-ZQWL-CANFD_ZQWL-CANFD_6A646D9E210A-if00'
     ),
-    'right': (
-        '/dev/serial/by-id/'
-        'usb-ZQWL-CANFD_ZQWL-CANFD_6A649697220A-if00'
-    ),
+    'right': STABLE_PORT,
 }
 CONFIG_PATH = REPO_ROOT / 'deployment' / 'config' / 'gripper_can.json'
-DEFAULT_SPEED = 25
-DEFAULT_MAX_CURRENT = 200
-POSITIONS = {'open': 0, 'close': 980}
-TOLERANCE = 10
+POSITIONS = {'open': 0, 'close': 1000}
+DEFAULT_SPEED = 50
+DEFAULT_FORCE = 100
+DEFAULT_ACCELERATION = 100
+DEFAULT_DECELERATION = 100
+DEFAULT_TOLERANCE = 8
 
 
 def _ensure_dialout_group() -> None:
@@ -61,47 +62,6 @@ def _ensure_dialout_group() -> None:
     command = shlex.join([sys.executable, *sys.argv])
     env = dict(os.environ, GRIPPER_CAN_REEXEC='1')
     os.execvpe('sg', ['sg', 'dialout', '-c', command], env)
-
-
-def _read_register(
-        client: ZqwlCanFd,
-        address: int,
-        payload_size: int = 2,
-        timeout: float = 0.5) -> bytes | None:
-    request = register_read_request_frame(
-        address, payload_size=payload_size)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        client.send(request)
-        for message in client.messages(0.05):
-            if not isinstance(message, CanFrame):
-                continue
-            if message.can_id & 0x80:
-                continue
-            received = (message.can_id >> 8) & 0xFFFF
-            if received == address:
-                return message.data
-    return None
-
-
-def _write_register_verified(
-        client: ZqwlCanFd,
-        address: int,
-        value: int,
-        timeout: float = 2.0) -> bool:
-    client.send(scalar_write_frame(address, value))
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(0.1)
-        data = _read_register(client, address, timeout=0.1)
-        if data is not None and decode_register_u16(data) == value:
-            return True
-    return False
-
-
-def _read_feedback(client: ZqwlCanFd, timeout: float = 0.5) -> int | None:
-    data = _read_register(client, REG_FEEDBACK, payload_size=4, timeout=timeout)
-    return decode_feedback(data) if data is not None else None
 
 
 def _load_side_config(side: str) -> dict[str, object]:
@@ -134,152 +94,239 @@ def _config_int(
     return value
 
 
-def _wait_for_position(
-        client: ZqwlCanFd, start: int, target: int, timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    last = start
-    stable_since: float | None = None
-    next_print = 0.0
-    while time.monotonic() < deadline:
-        position = _read_feedback(client)
-        now = time.monotonic()
-        if position is None:
-            continue
-        if now >= next_print:
-            print(f'feedback={position}', flush=True)
-            next_print = now + 0.5
-        if abs(position - target) <= TOLERANCE:
-            return True
-        if position == last:
-            if stable_since is None:
-                stable_since = now
-            elif now - stable_since >= 1.0:
-                return target > start and position > start + 5
-        else:
-            last = position
-            stable_since = None
-        time.sleep(0.05)
-    return False
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Direct CAN open/close for the CTAG2F90-D gripper.')
+        description='Direct OmniPicker 3 CAN-FD control.')
     parser.add_argument('side', choices=('left', 'right'))
-    parser.add_argument('action', choices=tuple(POSITIONS))
     parser.add_argument(
-        '--keep-enabled',
-        action='store_true',
-        help='leave the motor and CAN channel enabled after the command',
-    )
+        'action', choices=('open', 'close', 'position', 'status'))
     parser.add_argument(
-        '--speed',
-        type=int,
-        default=None,
-        metavar='PERCENT',
-        help='motion speed percentage, 1..100 (default: config value or 25)',
-    )
+        '--target', type=int, default=None,
+        help='ROS raw position for action=position (0=open, 1000=closed)')
     parser.add_argument(
-        '--max-current',
-        type=int,
-        default=None,
-        metavar='VALUE',
-        help='0x0533 current-limit register, 1..1000 '
-             '(default: config value or 200)',
-    )
+        '--transport', choices=('zqwl', 'socketcan'), default='zqwl')
+    parser.add_argument('--port', default=None, help='ZQWL serial device')
+    parser.add_argument(
+        '--interface', default=None,
+        help='SocketCAN interface (default: can0 for left, can1 for right)')
+    parser.add_argument(
+        '--device-id', type=int, default=None,
+        help='OP3 standard CAN node ID (default: config value or 1)')
+    parser.add_argument(
+        '--speed', type=int, default=None,
+        help='motion speed percentage, 1..100')
+    parser.add_argument(
+        '--force', type=int, default=None,
+        help='motion force/torque percentage, 1..100')
+    parser.add_argument(
+        '--acceleration', type=int, default=None,
+        help='acceleration percentage, 1..100')
+    parser.add_argument(
+        '--deceleration', type=int, default=None,
+        help='deceleration percentage, 1..100')
+    parser.add_argument(
+        '--tolerance', type=int, default=DEFAULT_TOLERANCE,
+        help='feedback tolerance in the ROS 0..1000 position contract')
+    parser.add_argument(
+        '--timeout', type=float, default=10.0,
+        help='motion timeout in seconds')
+    parser.add_argument(
+        '--classic-can', action='store_true',
+        help='send classic CAN instead of CAN-FD (OP3 compatibility mode)')
+    parser.add_argument(
+        '--keep-enabled', action='store_true',
+        help='leave the ZQWL CAN channel configured after the command')
     return parser.parse_args()
 
 
+def _validate_percent(name: str, value: int) -> None:
+    if not 1 <= value <= 100:
+        raise ValueError(f'--{name} must be 1..100')
+
+
+def _wait_for_position(
+        transport,
+        device_id: int,
+        target: int,
+        speed: int,
+        force: int,
+        acceleration: int,
+        deceleration: int,
+        can_fd: bool,
+        brs: bool,
+        tolerance: int,
+        timeout: float) -> tuple[bool, int | None, object | None]:
+    deadline = time.monotonic() + timeout
+    last_position = None
+    last_status = None
+    next_print = 0.0
+    while time.monotonic() < deadline:
+        if can_fd:
+            transport.send(position_query_frame(
+                device_id=device_id, brs=brs))
+        transport.send(control_frame(
+            target,
+            speed_percent=speed,
+            force_percent=force,
+            acceleration_percent=acceleration,
+            deceleration_percent=deceleration,
+            device_id=device_id,
+            fd=can_fd,
+            brs=brs,
+        ))
+        for frame in transport.receive(0.03):
+            queried = decode_position_query(frame, device_id)
+            if queried is not None:
+                last_position = int(round(
+                    (1.0 - min(1.0, max(0.0, queried / 4095.0))) * 1000))
+                if abs(last_position - target) <= tolerance:
+                    return True, last_position, last_status
+                continue
+            status = decode_status(frame, device_id)
+            if status is None:
+                continue
+            last_status = status
+            last_position = position_from_can(status.position_byte)
+            now = time.monotonic()
+            if now >= next_print:
+                print(
+                    f'position={last_position} byte={status.position_byte} '
+                    f'state={status.state_name} fault={status.fault_name}',
+                    flush=True)
+                next_print = now + 0.5
+            if status.fault_code:
+                return False, last_position, status
+            if status.state_code == STATE_DROPPED:
+                return False, last_position, status
+            if abs(last_position - target) <= tolerance:
+                return True, last_position, status
+            if status.state_code == STATE_STALLED:
+                closing = target > (last_position or 0)
+                return closing, last_position, status
+        time.sleep(0.02)
+    return False, last_position, last_status
+
+
 def main() -> int:
-    _ensure_dialout_group()
     args = _parse_args()
+    if args.transport == 'zqwl':
+        _ensure_dialout_group()
     side_config = _load_side_config(args.side)
-    if args.speed is None:
-        args.speed = _config_int(side_config, 'speed', DEFAULT_SPEED)
-    if args.max_current is None:
-        args.max_current = _config_int(
-            side_config, 'max_current', DEFAULT_MAX_CURRENT)
-    if not 1 <= args.speed <= 100:
-        print('error: --speed must be 1..100', file=sys.stderr)
-        return 2
-    if not 1 <= args.max_current <= 1000:
-        print('error: --max-current must be 1..1000', file=sys.stderr)
-        return 2
-    target = POSITIONS[args.action]
-    client = ZqwlCanFd(port=PORTS[args.side], timeout=0.5)
-    configured = False
-    enabled = False
-    original_max_current: int | None = None
-    max_current_changed = False
+    device_id = args.device_id if args.device_id is not None else _config_int(
+        side_config, 'device_id', 1)
+    speed = args.speed if args.speed is not None else _config_int(
+        side_config, 'speed', DEFAULT_SPEED)
+    force = args.force if args.force is not None else _config_int(
+        side_config, 'force_percent', DEFAULT_FORCE)
+    acceleration = (
+        args.acceleration if args.acceleration is not None else _config_int(
+            side_config, 'acceleration_percent', DEFAULT_ACCELERATION))
+    deceleration = (
+        args.deceleration if args.deceleration is not None else _config_int(
+            side_config, 'deceleration_percent', DEFAULT_DECELERATION))
     try:
-        client.open()
-        client.configure_can(channel=0, bitrate=1_000_000, fd=False)
+        _validate_percent('speed', speed)
+        _validate_percent('force', force)
+        _validate_percent('acceleration', acceleration)
+        _validate_percent('deceleration', deceleration)
+    except ValueError as exc:
+        print(f'error: {exc}', file=sys.stderr)
+        return 2
+    if not 1 <= device_id <= 0x7FF:
+        print('error: --device-id must be 1..0x7FF', file=sys.stderr)
+        return 2
+    if args.tolerance < 0 or args.timeout <= 0.0:
+        print('error: tolerance must be >=0 and timeout >0', file=sys.stderr)
+        return 2
+    if args.action == 'position':
+        if args.target is None:
+            print('error: action=position requires --target', file=sys.stderr)
+            return 2
+        target = max(0, min(1000, args.target))
+    elif args.action == 'status':
+        target = None
+    else:
+        target = POSITIONS[args.action]
+    can_fd = not args.classic_can
+    brs = can_fd
+
+    if args.transport == 'zqwl':
+        port = args.port or PORTS[args.side]
+        transport = ZqwlCanTransport(
+            port=port,
+            serial_baudrate=DEFAULT_SERIAL_BAUD,
+            bitrate=DEFAULT_BITRATE,
+            data_bitrate=DEFAULT_DATA_BITRATE,
+            fd=can_fd,
+        )
+        endpoint = port
+    else:
+        iface = args.interface or ('can0' if args.side == 'left' else 'can1')
+        transport = SocketCanTransport(iface, fd=can_fd, brs=brs)
+        endpoint = iface
+
+    configured = False
+    try:
+        transport.open()
         configured = True
-        time.sleep(0.2)
-        start = _read_feedback(client)
-        if start is None:
-            print('error: no 0x0418 feedback from gripper', file=sys.stderr)
-            return 1
+        mode = 'CAN-FD 1M/5M BRS' if can_fd else 'classic CAN 1M'
         print(
-            f'side={args.side} action={args.action} speed={args.speed}% '
-            f'max_current={args.max_current} start={start}',
+            f'side={args.side} action={args.action} transport='
+            f'{args.transport} endpoint={endpoint} mode={mode} '
+            f'id={device_id}',
             flush=True)
-
-        max_current_data = _read_register(client, REG_MAX_CURRENT)
-        if max_current_data is None:
-            print('error: no 0x0533 response from gripper', file=sys.stderr)
+        if target is None:
+            if not can_fd:
+                print(
+                    'error: status query requires CAN-FD; the read-only OP3 '
+                    'position request is an extended 64-byte frame',
+                    file=sys.stderr)
+                return 2
+            deadline = time.monotonic() + min(args.timeout, 2.0)
+            while time.monotonic() < deadline:
+                transport.send(position_query_frame(
+                    device_id=device_id, brs=brs))
+                found = None
+                for frame in transport.receive(0.1):
+                    found = decode_position_query(frame, device_id)
+                    if found is not None:
+                        break
+                if found is not None:
+                    position = int(round(
+                        (1.0 - min(1.0, max(0.0, found / 4095.0))) * 1000))
+                    print(
+                        f'ok: position_raw={found} position={position}',
+                        flush=True)
+                    return 0
+            print('error: no read-only position response', file=sys.stderr)
             return 1
-        original_max_current = decode_register_u16(max_current_data)
-        print(
-            f'max_current: {original_max_current} -> {args.max_current}',
-            flush=True)
-        if original_max_current != args.max_current:
-            if not _write_register_verified(
-                    client, REG_MAX_CURRENT, args.max_current):
-                print('error: 0x0533 write was not confirmed', file=sys.stderr)
-                return 1
-            max_current_changed = True
-
-        client.send(enable_frame(True))
-        enabled = True
-        time.sleep(0.2)
-        for frame in motion_config_frames(args.speed, 100, 200):
-            client.send(frame)
-        for frame in motion_frames(target):
-            client.send(frame)
-
-        reached = _wait_for_position(client, start, target, timeout=10.0)
-        final = _read_feedback(client)
+        reached, final, status = _wait_for_position(
+            transport, device_id, target, speed, force,
+            acceleration, deceleration, can_fd, brs,
+            args.tolerance, args.timeout)
         if reached:
-            print(f'ok: target={target} feedback={final}', flush=True)
+            suffix = (
+                f' state={status.state_name} fault={status.fault_name}'
+                if status is not None else '')
+            print(f'ok: target={target} feedback={final}{suffix}', flush=True)
             return 0
-        print(f'error: target={target} feedback={final}', file=sys.stderr)
+        suffix = (
+            f' state={status.state_name} fault={status.fault_name}'
+            if status is not None else '')
+        print(
+            f'error: target={target} feedback={final}{suffix}',
+            file=sys.stderr)
         return 1
-    except (OSError, ZqwlError) as exc:
+    except (OSError, ZqwlError, CanTransportError, ValueError) as exc:
         print(f'error: {exc}', file=sys.stderr)
         return 1
     finally:
-        if not args.keep_enabled and enabled:
-            try:
-                client.send(enable_frame(False))
-            except (OSError, ZqwlError):
-                pass
-        if configured and max_current_changed and original_max_current is not None:
-            try:
-                if not _write_register_verified(
-                        client, REG_MAX_CURRENT, original_max_current):
-                    print('warning: 0x0533 restore was not confirmed',
-                          file=sys.stderr)
-            except (OSError, ZqwlError):
-                pass
         if not args.keep_enabled and configured:
-            try:
-                client.disable_can(0)
-            except (OSError, ZqwlError):
-                pass
-        if args.keep_enabled:
-            print('motor and CAN channel remain enabled', flush=True)
-        client.close()
+            if hasattr(transport, 'disable'):
+                transport.disable()
+            transport.close()
+        elif args.keep_enabled:
+            print('CAN channel remains configured', flush=True)
 
 
 if __name__ == '__main__':

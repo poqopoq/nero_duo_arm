@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run the CTAG2F90-D size/angle/speed acceptance sweep.
+"""Run the OmniPicker 3 position/speed acceptance sweep.
 
 The test uses only the existing ROS 2 interfaces:
 
-* ``/<side>_gripper/position_cmd`` for the 0..990 jaw command;
-* ``motion_speed_percent`` for the vendor speed register;
+* ``/<side>_gripper/position_cmd`` for the 0..1000 gripper command;
+* ``motion_speed_percent`` for the OP3 velocity byte;
 * ``/<side>_gripper/enable`` and ``/clear_fault`` for the safety state;
 * ``position``, ``width``, ``state`` and ``status`` for verification.
 
@@ -31,25 +31,30 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Int32
 from std_srvs.srv import SetBool, Trigger
 
-from dual_nero_control.ctag_gripper import (
-    joint_from_position,
-    opening_from_position,
-)
+OP3_JOINT_OPEN_RAD = 0.39
+OP3_MAX_WIDTH_MM = 120.0
+
+
+def joint_from_position(position: int) -> float:
+    ratio = min(1.0, max(0.0, position / 1000.0))
+    return (1.0 - ratio) * OP3_JOINT_OPEN_RAD
+
+
+def opening_from_position(position: int) -> float:
+    ratio = min(1.0, max(0.0, position / 1000.0))
+    return OP3_MAX_WIDTH_MM * (1.0 - ratio)
 
 
 SIDES = ('left', 'right')
 # Keep the default matrix inside the mechanically reachable command range.
-# The measured grippers contact their hard stops around 914 raw counts, so
-# 990 remains available for an explicit contact/end-stop test but is not a
-# useful open-loop position target for the repeatability matrix.
+# Keep hard-stop/contact positions out of the repeatability matrix.  The full
+# OP3 close target remains 1000 and can be tested explicitly.
 DEFAULT_POSITIONS = '0,100,200,300,400,500,600,700,800,900'
 DEFAULT_SPEEDS = '10,20,30,40,50,60,70,80,90,100'
-# Conservative estimate from the measured vendor speed-register response.
-# At speed=10 the gripper moves roughly 6 raw-position counts per second.
-RAW_COUNTS_PER_SECOND_AT_FULL_SPEED = 0.6
+# Conservative travel estimate used only for the test deadline.
+RAW_COUNTS_PER_SECOND_AT_FULL_SPEED = 1000.0
 MOTION_TIMEOUT_MARGIN_SEC = 5.0
 GOAL_TIMEOUT_EXTRA_SEC = 2.0
-MOTION_RAMP_MS = 200
 
 
 @dataclass
@@ -80,7 +85,7 @@ def _parse_ints(value: str, name: str, minimum: int, maximum: int) -> list[int]:
 
 
 def _positions_arg(value: str) -> list[int]:
-    return _parse_ints(value, '--positions', 0, 990)
+    return _parse_ints(value, '--positions', 0, 1000)
 
 
 def _speeds_arg(value: str) -> list[int]:
@@ -216,7 +221,10 @@ class GripperSweep(Node):
         request.parameters = [
             Parameter('motion_speed_percent', value=speed).to_parameter_msg(),
             Parameter(
-                'motion_ramp_ms', value=MOTION_RAMP_MS
+                'motion_force_percent', value=100
+            ).to_parameter_msg(),
+            Parameter(
+                'motion_acceleration_percent', value=speed
             ).to_parameter_msg(),
             Parameter(
                 'goal_timeout_sec', value=float(goal_timeout_sec)
@@ -276,7 +284,7 @@ class GripperSweep(Node):
     def prepare_side(self, side: str, speed: int) -> bool:
         if not self.wait_until(
                 lambda: self._feedback_is_fresh(side), timeout=5.0):
-            print(f'{side}: no fresh position/width/state/status feedback')
+            print(f'{side}: no read-only position feedback')
             return False
         if not self._set_motion_parameters(
                 side, speed, max(30.0, self.timeout_sec)):
@@ -299,11 +307,10 @@ class GripperSweep(Node):
         enabled = self.wait_until(
             lambda: (
                 self._status(side, 'enabled') == 'true'
-                and self._status(side, 'enable_register') == '1'
-                and self._status(side, 'feedback_fresh') == 'true'
+                and self._feedback_is_fresh(side)
                 and self._status(side, 'state') != 'fault'
             ),
-            timeout=5.0,
+            timeout=max(5.0, self.timeout_sec),
         )
         if not enabled:
             print(
@@ -343,7 +350,7 @@ class GripperSweep(Node):
         baseline = item.position
         target_width_mm = opening_from_position(target)
         target_joint_rad = joint_from_position(target)
-        distance = abs(target - baseline) if baseline is not None else 990
+        distance = abs(target - baseline) if baseline is not None else 1000
         motion_timeout = self._motion_timeout(distance, speed)
         parameter_ok = self._set_motion_parameters(
             side,
@@ -371,12 +378,12 @@ class GripperSweep(Node):
             abs(position - target) if position is not None else math.inf)
         stalled = status.get('motion_stalled') == 'true'
         controller_closed = (
-            target == 990
+            target == 1000
             and stalled
             and baseline is not None
             and position is not None
             and position - baseline >= max(2 * self.position_tolerance, 10)
-            and 'closed on object' in status.get('motion_result', ''))
+            and 'closed stall' in status.get('motion_result', ''))
         reached = position_error <= self.position_tolerance
         healthy = (
             fresh
@@ -477,19 +484,19 @@ class GripperSweep(Node):
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description='CTAG2F90-D 10-position x 10-speed acceptance sweep')
+        description='OmniPicker 3 10-position x 10-speed acceptance sweep')
     parser.add_argument(
         '--sides', choices=('left', 'right', 'both'), default='both',
         help='grippers to test sequentially (default: both)')
     parser.add_argument(
         '--positions', type=_positions_arg, default=_positions_arg(DEFAULT_POSITIONS),
-        help=f'10 raw positions, 0=open, 990=closed (default: {DEFAULT_POSITIONS})')
+        help=f'10 raw positions, 0=open, 1000=closed (default: {DEFAULT_POSITIONS})')
     parser.add_argument(
         '--speeds', type=_speeds_arg, default=_speeds_arg(DEFAULT_SPEEDS),
         help=f'10 speed percentages, 1..100 (default: {DEFAULT_SPEEDS})')
     parser.add_argument(
-        '--position-tolerance', type=int, default=25,
-        help='allowed raw-position error (default: 25)')
+        '--position-tolerance', type=int, default=8,
+        help='allowed raw-position error (default: 8)')
     parser.add_argument(
         '--timeout-sec', type=float, default=10.0,
         help='wait time for each motion after the command (default: 10)')

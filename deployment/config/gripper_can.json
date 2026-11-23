@@ -1,10 +1,16 @@
 {
   "left": {
-    "speed": 25,
-    "max_current": 200
+    "device_id": 1,
+    "speed": 50,
+    "force_percent": 100,
+    "acceleration_percent": 100,
+    "deceleration_percent": 100
   },
   "right": {
-    "speed": 25,
-    "max_current": 200
+    "device_id": 1,
+    "speed": 50,
+    "force_percent": 100,
+    "acceleration_percent": 100,
+    "deceleration_percent": 100
   }
 }
