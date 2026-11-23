@@ -11,6 +11,8 @@ The node exposes:
 * ``/api/gripper``               gripper open/close, speed, enable, and recovery
 * ``/api/clear_faults``          clear latched NERO joint-driver faults
 * ``/api/recover``               reset motion state and re-enable one arm
+* ``/api/inference``             joint16 rollout process and bridge status
+* ``/api/inference/*``           launch, start, reset, home, stop, task, clear fault
 * ``/robot_urdf``                xacro-expanded dual-arm URDF for the 3D view
 * ``/stream/<camera>/<mode>``    MJPEG streams sourced from ROS Image topics
 
@@ -56,6 +58,7 @@ import xacro
 import yaml
 
 from .image_stream import CompressedImageStream, ImageStream
+from .inference_controller import InferenceController, InferenceError
 
 
 SIDES = ('left', 'right')
@@ -63,8 +66,9 @@ MOVE_TARGETS = ('left', 'right', 'both')
 CameraStream = Union[ImageStream, CompressedImageStream]
 LOCAL_JOINT_NAMES = [f'joint{index}' for index in range(1, 8)]
 GRIPPER_POSITION_MIN = 0
-GRIPPER_POSITION_MAX = 990
+GRIPPER_POSITION_MAX = 1000
 GRIPPER_FEEDBACK_TIMEOUT_SEC = 1.5
+JOINT16_DEFAULT_TASK = 'Use the right arm to put apple into white box.'
 
 # Conservative intersection of the NERO driver limits and the dual-arm URDF.
 # joint2 keeps the validated dual_nero_description relaxation; joint4 uses the
@@ -174,6 +178,28 @@ def _asset_path(root: Path, relative: str) -> Path:
     return candidate
 
 
+def _resolve_inference_script(configured: str) -> str:
+    """Find the deployment wrapper in source, symlink, and installed layouts."""
+    if configured:
+        return str(Path(configured).expanduser())
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / 'deployment' / 'scripts' / 'joint16_run_rollout.sh'
+        if candidate.is_file():
+            return str(candidate)
+    return '/home/work/nero_duo_arm/deployment/scripts/joint16_run_rollout.sh'
+
+
+def _resolve_joint16_home_file(configured: str) -> str:
+    """Find the checkpoint-native reset pose in source and installed layouts."""
+    if configured:
+        return str(Path(configured).expanduser())
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / 'deployment' / 'config' / 'joint16_home.yaml'
+        if candidate.is_file():
+            return str(candidate)
+    return '/home/work/nero_duo_arm/deployment/config/joint16_home.yaml'
+
+
 class WebappNode(Node):
     def __init__(self) -> None:
         super().__init__('dual_nero_webapp')
@@ -213,6 +239,7 @@ class WebappNode(Node):
 
         self.declare_parameter('urdf_xacro', '')
         self.declare_parameter('support_pose_file', '')
+        self.declare_parameter('joint16_home_file', '')
         self.declare_parameter('moveit_action_name', '/move_action')
         self.declare_parameter('moveit_planning_time_sec', 10.0)
         self.declare_parameter('moveit_planning_attempts', 5)
@@ -221,6 +248,11 @@ class WebappNode(Node):
         self.declare_parameter('moveit_goal_tolerance_rad', 0.01)
         self.declare_parameter('moveit_result_timeout_sec', 120.0)
         self.declare_parameter('moveit_dry_run', True)
+        self.declare_parameter('inference_rollout_script', '')
+        self.declare_parameter(
+            'inference_bridge_socket', '/tmp/nero_bimanual_vla_bridge.sock')
+        self.declare_parameter('inference_default_task', JOINT16_DEFAULT_TASK)
+        self.declare_parameter('inference_policy_port', 7447)
         self.declare_parameter('recover_on_enable', True)
         self.declare_parameter('joint_limit_recovery_script', '')
         self.declare_parameter('joint_limit_recovery_timeout_sec', 180.0)
@@ -246,7 +278,7 @@ class WebappNode(Node):
         self.declare_parameter('right_base_yaw', 3.141592653589793)
         self.declare_parameter('include_gripper', True)
         tcp_defaults = {
-            'x': 0.0, 'y': 0.0, 'z': 0.2133,
+            'x': 0.0, 'y': 0.0, 'z': 0.1725,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
         }
         for side in SIDES:
@@ -435,6 +467,7 @@ class WebappNode(Node):
             self._setup_cameras()
 
         self._support_pose, self._support_pose_errors = self._load_support_pose()
+        self._joint16_home, self._joint16_home_error = self._load_joint16_home()
 
         self.get_logger().info(
             'dual_nero_webapp ready: MoveIt action '
@@ -504,6 +537,86 @@ class WebappNode(Node):
         for side in poses:
             self.get_logger().info(f'{side} support pose loaded from {path}')
         return poses, errors
+
+    def _load_joint16_home(self) -> Tuple[Optional[Dict], Optional[str]]:
+        configured_path = str(
+            self.get_parameter('joint16_home_file').value).strip()
+        path = Path(_resolve_joint16_home_file(configured_path)).expanduser()
+        try:
+            document = yaml.safe_load(path.read_text(encoding='utf-8'))
+        except (OSError, yaml.YAMLError) as exc:
+            message = f'failed to load joint16 home {path}: {exc}'
+            self.get_logger().warn(message)
+            return None, message
+
+        data = document.get('positions') if isinstance(document, dict) else None
+        if not isinstance(data, dict):
+            message = f'{path} must contain a positions mapping'
+            self.get_logger().warn(message)
+            return None, message
+
+        joint_keys = {
+            side: [f'{side}_nero_joint_{index}' for index in range(1, 8)]
+            for side in SIDES
+        }
+        gripper_keys = {
+            side: f'{side}_gripper_width' for side in SIDES
+        }
+        expected = {
+            *(key for keys in joint_keys.values() for key in keys),
+            *gripper_keys.values(),
+        }
+        missing = sorted(expected - set(data))
+        unexpected = sorted(set(data) - expected)
+        if missing or unexpected:
+            details = []
+            if missing:
+                details.append('missing: ' + ', '.join(missing))
+            if unexpected:
+                details.append('unexpected: ' + ', '.join(unexpected))
+            message = f'{path} does not match the joint16 home schema: ' + '; '.join(details)
+            self.get_logger().warn(message)
+            return None, message
+
+        try:
+            joints = {
+                side: [float(data[key]) for key in joint_keys[side]]
+                for side in SIDES
+            }
+            grippers = {
+                side: float(data[gripper_keys[side]]) for side in SIDES
+            }
+        except (TypeError, ValueError):
+            message = f'{path} contains a non-numeric joint16 home position'
+            self.get_logger().warn(message)
+            return None, message
+        if not all(math.isfinite(value) for values in joints.values() for value in values):
+            message = f'{path} contains a non-finite joint position'
+            self.get_logger().warn(message)
+            return None, message
+        if not all(math.isfinite(value) for value in grippers.values()):
+            message = f'{path} contains a non-finite gripper width'
+            self.get_logger().warn(message)
+            return None, message
+        for side, positions in joints.items():
+            outside = [
+                f'joint{index + 1}={value:.6f}'
+                for index, (value, (low, high))
+                in enumerate(zip(positions, JOINT_LIMITS))
+                if not low <= value <= high
+            ]
+            if outside:
+                message = (
+                    f'{path}: {side} joint16 home exceeds joint limits: '
+                    + ', '.join(outside))
+                self.get_logger().warn(message)
+                return None, message
+
+        self.get_logger().info(f'joint16 training home loaded from {path}')
+        return {
+            'positions': joints,
+            'gripper_widths': grippers,
+        }, None
 
     def park_status(self) -> Dict[str, Dict]:
         available = {
@@ -660,7 +773,7 @@ class WebappNode(Node):
         by_name = {
             name: float(value) for name, value in zip(msg.name, msg.position)
         }
-        joint = by_name.get(f'{side}_ctag_left_1_joint')
+        joint = by_name.get(f'{side}_op3_wide1_joint')
         if joint is None and len(msg.position) == 1:
             joint = float(msg.position[0])
         with self._gripper_lock:
@@ -942,12 +1055,12 @@ class WebappNode(Node):
             return {'ok': False, 'error': f'unknown side: {side}'}
         values = {
             'motion_speed_percent': speed_percent,
-            'motion_torque_percent': torque_percent,
+            'motion_force_percent': torque_percent,
             'motion_ramp_ms': ramp_ms,
         }
         limits = {
             'motion_speed_percent': (1, 100),
-            'motion_torque_percent': (1, 100),
+            'motion_force_percent': (1, 100),
             'motion_ramp_ms': (0, 1000),
         }
         parameters = []
@@ -1376,6 +1489,80 @@ class WebappNode(Node):
                 'error': 'missing positions for ' + ', '.join(missing),
             }
         return self._move_target('both', positions_by_side)
+
+    def joint16_home_status(self) -> Dict:
+        if self._joint16_home is None:
+            return {
+                'available': False,
+                'error': self._joint16_home_error or 'joint16 training home is unavailable',
+                'joint_names': list(self.joint_names),
+                'positions': None,
+            }
+        return {
+            'available': True,
+            'joint_names': list(self.joint_names),
+            'positions': {
+                side: list(self._joint16_home['positions'][side])
+                for side in SIDES
+            },
+            'gripper_widths': dict(self._joint16_home['gripper_widths']),
+        }
+
+    def move_joint16_home(self) -> Dict:
+        if self._joint16_home is None:
+            return {
+                'ok': False,
+                'error': self._joint16_home_error or 'joint16 training home is unavailable',
+            }
+        positions = {
+            side: list(self._joint16_home['positions'][side])
+            for side in SIDES
+        }
+        recovery: Dict[str, Dict] = {}
+        dry_run = bool(self.get_parameter('moveit_dry_run').value)
+        if not dry_run and self.recover_on_enable and self.joint_limit_recovery_script:
+            if self._motion_lock.locked():
+                return {
+                    'ok': False,
+                    'error': 'another MoveIt motion is already in progress',
+                }
+            for side in SIDES:
+                gate_result = self.set_gate(side, False)
+                if not gate_result.get('ok'):
+                    return gate_result
+                self.get_logger().info(
+                    f'{side}: recovering joint limits before training home')
+                side_recovery = self._run_joint_limit_recovery(side)
+                recovery[side] = side_recovery
+                if not side_recovery.get('ok'):
+                    return {
+                        'ok': False,
+                        'error': (
+                            f'{side} joint-limit recovery failed: '
+                            f'{side_recovery.get("error", "unknown error")}'),
+                        'recovery': recovery,
+                    }
+                self._motor_enabled[side] = True
+                gate_result = self.set_gate(side, True)
+                if not gate_result.get('ok'):
+                    return {
+                        'ok': False,
+                        'error': (
+                            f'{side} control gate failed after recovery: '
+                            f'{gate_result.get("error", "unknown error")}'),
+                        'recovery': recovery,
+                    }
+        result = self._move_target('both', positions)
+        if recovery:
+            result['recovery'] = recovery
+        if result.get('ok'):
+            suffix = ' (dry-run; no driver command sent)' if result.get('dry_run') else ''
+            result['message'] = (
+                'both arms recovered inside joint limits, then MoveIt motion to '
+                f'joint16 training home completed{suffix}'
+                if recovery else
+                f'both arms MoveIt motion to joint16 training home completed{suffix}')
+        return result
 
     def park(self, side: str) -> Dict:
         if side not in MOVE_TARGETS:
@@ -1837,6 +2024,15 @@ class WebappNode(Node):
 
 def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
     app = FastAPI(title='Dual NERO webapp')
+    inference = InferenceController(
+        _resolve_inference_script(
+            str(node.get_parameter('inference_rollout_script').value)),
+        bridge_socket=str(
+            node.get_parameter('inference_bridge_socket').value),
+        default_task=str(node.get_parameter('inference_default_task').value),
+        policy_port=int(node.get_parameter('inference_policy_port').value),
+    )
+    app.state.inference = inference
 
     agx_share = Path(get_package_share_directory('agx_arm_description'))
     description_share = Path(get_package_share_directory('dual_nero_description'))
@@ -1889,8 +2085,10 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
             ],
             'initial_gate_open': bool(node.get_parameter('initial_gate_open').value),
             'park': node.park_status(),
+            'joint16_home': node.joint16_home_status(),
             'motion': node.motion_status(),
             'gripper': node.gripper_status(),
+            'inference': inference.status(),
         }
 
     @app.get('/api/state')
@@ -1899,6 +2097,7 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
             'type': 'state',
             'data': node.snapshot(),
             'motion': node.motion_status(),
+            'inference': inference.status(),
         }
 
     @app.get('/api/motion')
@@ -1922,6 +2121,10 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
     @app.get('/api/health')
     async def health() -> Dict:
         return {'ok': True, 'server_time': time.time()}
+
+    @app.get('/api/inference')
+    async def inference_status() -> Dict:
+        return inference.status(include_log=True)
 
     @app.get('/stream/{camera}/{mode}')
     async def stream(camera: str, mode: str) -> StreamingResponse:
@@ -1957,8 +2160,28 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, function, *args)
 
+    def inference_guard() -> Optional[Dict]:
+        if not inference.active:
+            return None
+        return {
+            'ok': False,
+            'error': (
+                'VLA inference is active; use Stop inference before manual '
+                'MoveIt, gate, motor, or gripper control'),
+            'inference': inference.status(),
+        }
+
+    async def inference_action(function, *args) -> Dict:
+        try:
+            return await run_blocking(function, *args)
+        except InferenceError as exc:
+            return {'ok': False, 'error': str(exc), 'inference': inference.status()}
+
     @app.post('/api/control_gate')
     async def control_gate(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = str(body.get('side', ''))
         if side not in SIDES:
@@ -1967,6 +2190,9 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
     @app.post('/api/enable')
     async def enable(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = str(body.get('side', ''))
         if side not in SIDES:
@@ -1975,6 +2201,9 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
     @app.post('/api/gripper')
     async def gripper(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = str(body.get('side', ''))
         if side not in SIDES:
@@ -2001,6 +2230,9 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
     @app.post('/api/clear_faults')
     async def clear_faults(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = str(body.get('side', ''))
         if side not in SIDES:
@@ -2009,6 +2241,9 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
     @app.post('/api/recover')
     async def recover(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = str(body.get('side', ''))
         if side not in SIDES:
@@ -2017,6 +2252,9 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
     @app.post('/api/park')
     async def park(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = str(body.get('side', ''))
         if side not in MOVE_TARGETS:
@@ -2025,6 +2263,9 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
     @app.post('/api/move')
     async def move(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = str(body.get('side', ''))
         positions = body.get('positions')
@@ -2043,6 +2284,9 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
 
     @app.post('/api/cancel_motion')
     async def cancel_motion(request: Request) -> Dict:
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
         body = await request.json()
         side = body.get('side')
         if side is not None:
@@ -2051,16 +2295,77 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
                 return {'ok': False, 'error': f'unknown move target: {side}'}
         return await run_blocking(node.cancel_motion, side)
 
+    @app.post('/api/inference/launch')
+    async def inference_launch(request: Request) -> Dict:
+        body = await request.json()
+        return await inference_action(inference.launch, body.get('task'))
+
+    @app.post('/api/inference/start')
+    async def inference_start(request: Request) -> Dict:
+        body = await request.json()
+        if body.get('confirm') is not True:
+            return {
+                'ok': False,
+                'error': 'explicit confirm=true is required before sending /start',
+            }
+        return await inference_action(inference.start)
+
+    @app.post('/api/inference/stop')
+    async def inference_stop(request: Request) -> Dict:
+        await request.json()
+        return await inference_action(inference.stop)
+
+    @app.post('/api/inference/reset')
+    async def inference_reset(request: Request) -> Dict:
+        body = await request.json()
+        if body.get('confirm') is not True:
+            return {
+                'ok': False,
+                'error': 'explicit confirm=true is required before moving home with /reset',
+            }
+        return await inference_action(inference.reset)
+
+    @app.post('/api/inference/home')
+    async def inference_home(request: Request) -> Dict:
+        body = await request.json()
+        if body.get('confirm') is not True:
+            return {
+                'ok': False,
+                'error': ('explicit confirm=true is required before moving to '
+                          'joint16 training home'),
+            }
+        blocked = inference_guard()
+        if blocked is not None:
+            return blocked
+        return await run_blocking(node.move_joint16_home)
+
+    @app.post('/api/inference/task')
+    async def inference_task(request: Request) -> Dict:
+        body = await request.json()
+        return await inference_action(inference.set_task, body.get('task'))
+
+    @app.post('/api/inference/clear_fault')
+    async def inference_clear_fault(request: Request) -> Dict:
+        body = await request.json()
+        if body.get('confirm') is not True:
+            return {
+                'ok': False,
+                'error': 'explicit confirm=true is required before clearing a bridge fault',
+            }
+        return await inference_action(inference.clear_bridge_fault)
+
     @app.post('/api/emergency_stop')
     async def emergency_stop(request: Request) -> Dict:
         body = await request.json()
         side = str(body.get('side', ''))
         if side not in SIDES:
             return {'ok': False, 'error': f'unknown side: {side}'}
+        inference.stop(wait=False)
         return await run_blocking(node.emergency_stop, side)
 
     @app.post('/api/emergency_stop_all')
     async def emergency_stop_all() -> Dict:
+        inference.stop(wait=False)
         return await run_blocking(node.emergency_stop_all)
 
     clients: Set[WebSocket] = set()
@@ -2073,6 +2378,7 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
             'type': 'state',
             'data': node.snapshot(),
             'motion': node.motion_status(),
+            'inference': inference.status(),
         }))
         try:
             while True:
@@ -2080,6 +2386,13 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
                 try:
                     message = json.loads(raw)
                 except json.JSONDecodeError:
+                    continue
+                blocked = inference_guard()
+                if blocked is not None:
+                    await websocket.send_text(json.dumps({
+                        'type': 'error',
+                        'message': blocked['error'],
+                    }))
                     continue
                 side = message.get('side')
                 positions = message.get('positions')
@@ -2107,6 +2420,7 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
                 'type': 'state',
                 'data': node.snapshot(),
                 'motion': node.motion_status(),
+                'inference': inference.status(refresh_bridge=False),
             })
             dead: List[WebSocket] = []
             for websocket in list(clients):
@@ -2126,6 +2440,8 @@ def build_app(node: WebappNode, static_dir: Path) -> FastAPI:
         task = getattr(app.state, 'broadcast_task', None)
         if task is not None:
             task.cancel()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, inference.shutdown)
 
     return app
 

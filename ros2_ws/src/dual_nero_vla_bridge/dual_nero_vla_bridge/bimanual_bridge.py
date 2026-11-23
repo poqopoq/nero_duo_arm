@@ -34,6 +34,7 @@ import cv2
 import numpy as np
 import rclpy
 from control_msgs.action import FollowJointTrajectory
+from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import MoveItErrorCodes, PositionIKRequest, RobotState
 from moveit_msgs.srv import GetPositionIK
@@ -183,6 +184,10 @@ class NeroBimanualVlaBridge(Node):
         self.declare_parameter('left_gripper_width_topic', '/left_gripper/width')
         self.declare_parameter('right_gripper_width_topic', '/right_gripper/width')
         self.declare_parameter(
+            'left_gripper_status_topic', '/left_gripper/status')
+        self.declare_parameter(
+            'right_gripper_status_topic', '/right_gripper/status')
+        self.declare_parameter(
             'left_gripper_command_topic', '/left_gripper/position_cmd')
         self.declare_parameter(
             'right_gripper_command_topic', '/right_gripper/position_cmd')
@@ -283,6 +288,10 @@ class NeroBimanualVlaBridge(Node):
             side: str(self.get_parameter(f'{side}_gripper_width_topic').value)
             for side in SIDES
         }
+        self.gripper_status_topics = {
+            side: str(self.get_parameter(f'{side}_gripper_status_topic').value)
+            for side in SIDES
+        }
         self.gripper_command_topics = {
             side: str(self.get_parameter(f'{side}_gripper_command_topic').value)
             for side in SIDES
@@ -303,6 +312,10 @@ class NeroBimanualVlaBridge(Node):
                 'gripper_position_max must be greater than gripper_position_min')
         self.gripper_feedback_timeout = max(
             0.1, float(self.get_parameter('gripper_feedback_timeout_sec').value))
+        self.gripper_motion_required = bool(
+            self.gripper_enabled
+            and self.allow_gripper_motion
+            and self.execution_mode != 'dry_run')
         self.watchdog_timeout = float(self.get_parameter('watchdog_timeout_sec').value)
         self.stop_service_timeout = float(
             self.get_parameter('stop_service_timeout_sec').value)
@@ -391,6 +404,10 @@ class NeroBimanualVlaBridge(Node):
             }
             for side in SIDES
         }
+        self._gripper_driver_status = {
+            side: {'values': {}, 'mono': 0.0}
+            for side in SIDES
+        }
         self._images: dict[str, dict[str, Any]] = {}
         self._last_action_mono = 0.0
         self._watchdog_fired = False
@@ -441,6 +458,12 @@ class NeroBimanualVlaBridge(Node):
                 lambda msg, side=side: self._gripper_width_cb(side, msg),
                 topic_qos,
             )
+            self.create_subscription(
+                DiagnosticArray,
+                self.gripper_status_topics[side],
+                lambda msg, side=side: self._gripper_status_cb(side, msg),
+                topic_qos,
+            )
         self._gripper_command_publishers = {
             side: self.create_publisher(
                 Int32, self.gripper_command_topics[side], topic_qos)
@@ -470,11 +493,6 @@ class NeroBimanualVlaBridge(Node):
 
         self._stop_clients = {
             side: self.create_client(Empty, f'/{side}/emergency_stop')
-            for side in SIDES
-        }
-        self._gripper_stop_clients = {
-            side: self.create_client(
-                Empty, f'/{side}_gripper/emergency_stop')
             for side in SIDES
         }
         self._gate_clients = {
@@ -585,6 +603,93 @@ class NeroBimanualVlaBridge(Node):
                 if now - feedback['gripper_mono'] > self.gripper_feedback_timeout:
                     return False
         return True
+
+    def _gripper_status_cb(self, side: str, msg: DiagnosticArray) -> None:
+        if not msg.status:
+            return
+        values = {
+            item.key: item.value for item in msg.status[0].values
+        }
+        if not values:
+            return
+        with self._lock:
+            self._gripper_driver_status[side] = {
+                'values': values,
+                'mono': time.monotonic(),
+            }
+
+    def _gripper_health_snapshot(
+        self, now: Optional[float] = None
+    ) -> dict[str, Any]:
+        """Return whether both gripper drivers may safely accept VLA commands."""
+        if now is None:
+            now = time.monotonic()
+        with self._lock:
+            statuses = {
+                side: {
+                    'values': dict(self._gripper_driver_status[side]['values']),
+                    'mono': float(self._gripper_driver_status[side]['mono']),
+                }
+                for side in SIDES
+            }
+        sides: dict[str, dict[str, Any]] = {}
+        reasons: list[str] = []
+        for side in SIDES:
+            entry = statuses[side]
+            values = entry['values']
+            age = now - entry['mono'] if entry['mono'] > 0.0 else None
+            fresh = age is not None and age <= self.gripper_feedback_timeout
+            state = str(values.get('state', 'unavailable')) if fresh else 'unavailable'
+            enabled = values.get('enabled') == 'true'
+            auto_enable = values.get('auto_enable_on_command') == 'true'
+            estop_latched = values.get('estop_latched') == 'true'
+            fault_reason = str(values.get('fault_reason') or '')
+            side_reasons: list[str] = []
+            if not fresh:
+                side_reasons.append(
+                    'driver status is missing or stale'
+                    if age is None else f'driver status is {age:.2f}s old')
+            elif estop_latched:
+                side_reasons.append('emergency stop is latched')
+            elif fault_reason or state == 'fault':
+                side_reasons.append(f'fault latched: {fault_reason or "unknown"}')
+            elif not enabled and not auto_enable:
+                side_reasons.append('motor is disabled')
+            sides[side] = {
+                'ready': not side_reasons,
+                'reasons': side_reasons,
+                'status_age_sec': None if age is None else round(age, 3),
+                'state': state,
+                'enabled': enabled,
+                'auto_enable_on_command': auto_enable,
+                'estop_latched': estop_latched,
+                'fault_reason': fault_reason or None,
+            }
+            reasons.extend(f'{side}: {reason}' for reason in side_reasons)
+
+        feedback_ready = self._gripper_feedback_ready(now)
+        if not feedback_ready:
+            reasons.append('width feedback is missing or stale')
+        return {
+            'ready': feedback_ready and all(
+                side['ready'] for side in sides.values()),
+            'feedback_ready': feedback_ready,
+            'reason': '; '.join(reasons) if reasons else None,
+            'sides': sides,
+        }
+
+    def _gripper_action_block_reason(self) -> Optional[str]:
+        if not self.gripper_motion_required:
+            return None
+        health = self._gripper_health_snapshot()
+        if health['ready']:
+            return None
+        return (
+            'gripper driver is not ready: '
+            f"{health['reason'] or 'health unavailable'}. "
+            'Clear the gripper fault, enable both motors, verify width/status '
+            'feedback, then retry.'
+        )
 
     def _send_gripper_commands(self, applied_poses: dict[str, list[float]]) -> dict:
         if not self.gripper_enabled or not self.allow_gripper_motion:
@@ -1158,14 +1263,14 @@ class NeroBimanualVlaBridge(Node):
 
     def _abort_motion(self, reason: str) -> None:
         with self._motion_condition:
-            first_fault = self._motion_fault_reason is None
-            if first_fault:
-                self._motion_fault_reason = reason
-                self._trajectory_status = {
-                    'state': 'fault',
-                    'reason': reason,
-                    'updated_mono': time.monotonic(),
-                }
+            if self._motion_fault_reason is not None:
+                return
+            self._motion_fault_reason = reason
+            self._trajectory_status = {
+                'state': 'fault',
+                'reason': reason,
+                'updated_mono': time.monotonic(),
+            }
             self._pending_joint_target = None
             self._stream_gate_open = False
             self._trajectory_abort.set()
@@ -1173,8 +1278,6 @@ class NeroBimanualVlaBridge(Node):
             start_stop_thread = not self._stop_in_progress
             self._stop_in_progress = True
             self._motion_condition.notify_all()
-        if not first_fault:
-            return
         self.get_logger().error(f'Bimanual VLA motion aborted: {reason}')
         if active_goal is not None:
             active_goal.cancel_goal_async()
@@ -1184,6 +1287,40 @@ class NeroBimanualVlaBridge(Node):
                 name='nero-bimanual-vla-stop',
                 daemon=True,
             ).start()
+
+    def _clear_motion_fault(self, timeout: float = 2.0) -> tuple[bool, Optional[str], Optional[str]]:
+        """Clear a latched stop/fault only after motion and the stop handshake are idle."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            with self._motion_condition:
+                stop_in_progress = self._stop_in_progress
+            if not stop_in_progress or time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+        with self._motion_condition:
+            if self._stop_in_progress:
+                return False, 'stop handshake is still in progress', self._motion_fault_reason
+            if self._active_goal_handle is not None:
+                return False, 'trajectory goal is still active', self._motion_fault_reason
+            if self._pending_joint_target is not None:
+                return False, 'a stream target is still pending', self._motion_fault_reason
+            if self._stream_gate_open:
+                return False, 'stream control gate is still open', self._motion_fault_reason
+            if self._trajectory_abort.is_set():
+                return False, 'motion abort cleanup is still in progress', self._motion_fault_reason
+            previous = self._motion_fault_reason
+            self._motion_fault_reason = None
+            self._watchdog_fired = False
+            self._last_action_mono = 0.0
+            self._trajectory_status = {
+                'state': 'idle',
+                'updated_mono': time.monotonic(),
+            }
+            self._motion_condition.notify_all()
+        if previous is not None:
+            self.get_logger().warn(
+                f'Cleared latched bimanual VLA motion fault: {previous}')
+        return True, None, previous
 
     def _stop_and_clear_abort(self) -> None:
         try:
@@ -1428,15 +1565,16 @@ class NeroBimanualVlaBridge(Node):
             request = SetBool.Request()
             request.data = False
             client.call_async(request)
-        for side, client in self._gripper_stop_clients.items():
-            if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
-                continue
-            client.call_async(Empty.Request())
+        # A normal VLA stop must not latch the gripper hardware emergency stop.
+        # The explicit WebApp emergency-stop action calls the gripper estop
+        # services directly. Latching them here made every subsequent rollout
+        # silently unable to grasp until a manual clear_fault.
 
     def _dispatch(self, request: dict[str, Any]) -> tuple[dict[str, Any], bytes]:
         command = request.get('cmd')
         if command == 'ping':
             status, error = self._observation_snapshot(require_images=False)
+            gripper_health = self._gripper_health_snapshot()
             return {
                 'ok': True,
                 'bimanual': True,
@@ -1456,7 +1594,10 @@ class NeroBimanualVlaBridge(Node):
                 'stream': self._trajectory_snapshot(),
                 'gripper_enabled': self.gripper_enabled,
                 'allow_gripper_motion': self.allow_gripper_motion,
+                'gripper_motion_required': self.gripper_motion_required,
                 'gripper_feedback_ready': self._gripper_feedback_ready(),
+                'gripper_health': gripper_health,
+                'gripper_ready': gripper_health['ready'],
                 'gripper_width_topics': dict(self.gripper_width_topics),
                 'gripper_command_topics': dict(self.gripper_command_topics),
                 'camera_keys': [spec['key'] for spec in self.camera_specs],
@@ -1498,6 +1639,20 @@ class NeroBimanualVlaBridge(Node):
                     request.get('action'), self.action_size, 'action')
             except (TypeError, ValueError) as exc:
                 return {'ok': False, 'error': str(exc)}, b''
+            gripper_block = self._gripper_action_block_reason()
+            if gripper_block is not None:
+                self.get_logger().error(
+                    f'Bimanual VLA action rejected: {gripper_block}',
+                    throttle_duration_sec=2.0,
+                )
+                return {
+                    'ok': True,
+                    'action': action,
+                    'accepted': False,
+                    'executed': False,
+                    'mode': self.execution_mode,
+                    'error': gripper_block,
+                }, b''
             snapshot, error = self._observation_snapshot(require_images=False)
             if snapshot is None:
                 return {'ok': False, 'error': error or 'state unavailable'}, b''
@@ -1694,6 +1849,16 @@ class NeroBimanualVlaBridge(Node):
                 'bimanual': True,
                 'dry_run': self.execution_mode == 'dry_run',
                 'execution_mode': self.execution_mode,
+            }, b''
+        if command == 'clear_fault':
+            cleared, error, previous = self._clear_motion_fault()
+            return {
+                'ok': cleared,
+                'cleared': bool(cleared and previous is not None),
+                'previous_fault': previous,
+                'motion_fault': self._motion_fault_reason,
+                'error': error,
+                'bimanual': True,
             }, b''
         return {'ok': False, 'error': f'unknown command: {command!r}'}, b''
 

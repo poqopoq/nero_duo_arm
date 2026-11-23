@@ -289,6 +289,65 @@ main {
   min-width: 80px;
   padding: 5px 8px;
 }
+
+.inference-panel {
+  padding: 8px 12px 10px;
+  background: linear-gradient(180deg, #171f29, var(--panel));
+}
+.inference-panel .panel-head { margin-bottom: 6px; }
+.inference-task-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.inference-task-row label { color: var(--muted); font-size: 11px; }
+.inference-task-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+}
+.inference-task-row button { padding: 4px 8px; font-size: 10px; }
+.inference-buttons { margin-top: 6px; }
+.inference-buttons button {
+  flex: 1 1 68px;
+  padding: 5px 6px;
+  font-size: 10px;
+}
+.inference-warning {
+  margin-top: 6px;
+  padding: 5px 7px;
+  border: 1px solid rgba(244, 191, 95, 0.38);
+  border-radius: 5px;
+  background: rgba(244, 191, 95, 0.08);
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.inference-warning.bad {
+  border-color: rgba(255, 107, 107, 0.42);
+  background: rgba(255, 107, 107, 0.08);
+  color: #ffc0c0;
+}
+.inference-log {
+  max-height: 118px;
+  margin: 6px 0 0;
+  padding: 6px 7px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #0f1318;
+  color: #b8c2cd;
+  font: 10px/1.35 "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .service-row button { flex: 1 1 0; font-size: 11px; }
 
 button {

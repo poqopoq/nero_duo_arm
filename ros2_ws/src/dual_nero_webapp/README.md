@@ -11,6 +11,9 @@ Browser dashboard for the table-mounted dual NERO workspace. It provides:
 - per-arm arm/motor health plus **Clear faults** and guarded **Recover arm**;
 - per-gripper **Open**, **Close**, arbitrary-position **Apply grip**, speed,
   and one-button **Clear obstruction** controls;
+- an **Inference** panel that launches the interactive joint16 rollout and
+  exposes **Training Home**, **Run**, **Reset**, **Stop**, task editing, and
+  bridge-fault clearing without a second terminal;
 - scene, left-wrist, and right-wrist camera tiles with color/depth switching;
 - a compact synchronized dual-arm toolbar, independently scrollable desktop
   controls, and a responsive camera gallery that preserves the complete image
@@ -29,6 +32,9 @@ not connected, so the workspace must still be kept clear.
 
 The complete Chinese operating manual, button reference, and HTTP/ROS command
 examples are in `deployment/docs/12_usage_and_commands.md`.
+
+The joint16 hardware runbook is
+`deployment/docs/20_robotwin_joint16_real.md`.
 
 ## Run
 
@@ -68,6 +74,52 @@ The status badge distinguishes `MoveIt: ready (DRY-RUN)` from
 `MoveIt: ready (LIVE)`, and every dry-run Send/Park result explicitly reports
 that no driver command was sent.
 
+When the joint16 tmux session already started drivers, cameras, grippers,
+MoveIt, and the VLA bridge, launch only the webapp process. Do **not** add
+`start_moveit:=true`, or MoveIt will be started twice:
+
+```bash
+ros2 launch dual_nero_webapp webapp.launch.py
+```
+
+## Inference panel
+
+The panel owns one interactive checkpoint rollout process, started through a
+PTY so the deployment wrapper sees a terminal. The state machine is
+`stopped → loading → idle → starting → running`, with `resetting`, `stopping`,
+and `fault` transitions.
+
+1. **Launch** starts `joint16_run_rollout.sh`, connects the bridge and policy
+   server, and stops at the interactive prompt. It never sends `/start`, so the
+   robot does not move.
+2. **Run** sends `/start` and requires browser confirmation.
+3. **Reset** sends `/reset` and requires confirmation. For joint16 the rollout
+   loads `deployment/config/joint16_home.yaml`, so reset returns both arms and
+   grippers to the native 16-key training home rather than the pose captured at
+   launch. It also pauses inference and restores the initial task.
+4. **Training Home** is available only while inference is stopped. It uses
+   MoveIt to send both arms to the joint positions in the same home YAML.
+   In live mode it first runs the guarded per-arm joint-limit recovery, so a
+   power-off sag outside the joint limits is pulled back inside the deployment
+   envelope before MoveIt plans home. Dry-run never performs that real recovery
+   motion.
+5. **Stop** sends `/stop`, closes the bridge stream gate, and terminates the
+   rollout process group after a grace period.
+6. **Set** sends `/subtask <text>`; it applies from the next policy inference.
+7. **Clear bridge fault** sends the bridge's `clear_fault` command. It is only
+   accepted while no inference process is alive and the bridge has no active
+   goal or pending stream target.
+
+Before launching, the backend checks that the rollout script exists and is
+executable, the bridge socket exists, `127.0.0.1:7447` is listening, the bridge
+schema is `joint16`, and no motion fault is latched.
+
+While the inference process is alive, the backend rejects manual `/api/move`,
+`/api/park`, gate, motor, gripper, clear-fault, recover, and cancel-motion
+requests so two controllers cannot write joint commands at the same time.
+**E-stop** and **Stop both** remain available and request inference shutdown
+first.
+
 ## Safety interlocks
 
 Both the webapp and the driver enforce control state:
@@ -88,7 +140,8 @@ only when that arm's webapp gate is open, its motors are marked enabled, its
 feedback is fresh (less than 1.5 seconds old), and the configured pose passes
 the same joint-limit validation as manual commands. The browser asks for
 confirmation before sending it. **Both Park** requires both per-arm poses and
-the same readiness checks for both arms.
+the same readiness checks for both arms. Both Park targets mirror the joint16
+training home so either arm is ready for replay or policy startup.
 
 Park sends the configured support pose through MoveIt. The app waits for the
 MoveIt result, so a successful response means MoveIt reported successful
@@ -174,6 +227,14 @@ Override any topic with a ROS parameter (for example
 | `/api/cancel_motion` | Request cancellation of the active MoveIt motion |
 | `/api/cameras` | Per-stream frame statistics |
 | `/api/park` | Plan and execute one or both configured support poses |
+| `/api/inference` | Inference state, task, bridge status, and recent PTY log |
+| `/api/inference/launch` | Launch the interactive rollout without sending `/start` |
+| `/api/inference/start` | Send `/start` (requires `confirm=true`) |
+| `/api/inference/stop` | Send `/stop` and shut down the rollout |
+| `/api/inference/reset` | Send `/reset` (requires `confirm=true`) |
+| `/api/inference/home` | Move both arms to the configured joint16 training home with MoveIt; rejected while inference is active (requires `confirm=true`) |
+| `/api/inference/task` | Send `/subtask <text>` |
+| `/api/inference/clear_fault` | Clear a latched bridge fault (requires `confirm=true`) |
 | `/api/emergency_stop` | Stop one arm and close its gate |
 | `/api/emergency_stop_all` | Stop both arms in parallel |
 | `/stream/<camera>/<mode>` | MJPEG stream (`color` or `depth`) |

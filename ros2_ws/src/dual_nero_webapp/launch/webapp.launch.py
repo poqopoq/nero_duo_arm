@@ -91,12 +91,21 @@ def generate_launch_description():
                 'right_wrist_color_compressed_topic'),
             'right_wrist_depth_topic': LaunchConfiguration('right_wrist_depth_topic'),
             'support_pose_file': support_pose_path,
+            'joint16_home_file': LaunchConfiguration('joint16_home_file'),
             'urdf_xacro': xacro_path,
             'trajectory_cancel_service': LaunchConfiguration(
                 'trajectory_cancel_service'),
             'trajectory_clear_cancel_service': LaunchConfiguration(
                 'trajectory_clear_cancel_service'),
             'moveit_dry_run': moveit_dry_run,
+            'inference_rollout_script': LaunchConfiguration(
+                'inference_rollout_script'),
+            'inference_bridge_socket': LaunchConfiguration(
+                'inference_bridge_socket'),
+            'inference_default_task': LaunchConfiguration(
+                'inference_default_task'),
+            'inference_policy_port': LaunchConfiguration(
+                'inference_policy_port'),
             'recover_on_enable': LaunchConfiguration('recover_joint_limits'),
             'joint_limit_recovery_script': str(RECOVER_SCRIPT),
             'joint_limit_recovery_timeout_sec': 180.0,
@@ -115,7 +124,7 @@ def generate_launch_description():
             'left_gripper_prefix': '/left_gripper',
             'right_gripper_prefix': '/right_gripper',
             'gripper_position_min': 0,
-            'gripper_position_max': 990,
+            'gripper_position_max': 1000,
             'gripper_feedback_timeout_sec': 1.5,
         }],
     )
@@ -141,8 +150,14 @@ def generate_launch_description():
             os.path.join(control_share, 'launch', 'dual_grippers.launch.py')),
         condition=IfCondition(start_grippers),
         launch_arguments={
+            'left_transport': LaunchConfiguration('gripper_transport'),
+            'right_transport': LaunchConfiguration('gripper_transport'),
             'left_port': LaunchConfiguration('left_gripper_port'),
             'right_port': LaunchConfiguration('right_gripper_port'),
+            'left_can_interface': LaunchConfiguration(
+                'left_gripper_can_interface'),
+            'right_can_interface': LaunchConfiguration(
+                'right_gripper_can_interface'),
             'allow_motion': LaunchConfiguration('gripper_allow_motion'),
             'enable_motor': LaunchConfiguration('gripper_enable_motor'),
             'can_fd': LaunchConfiguration('gripper_can_fd'),
@@ -153,14 +168,12 @@ def generate_launch_description():
                 'gripper_driver_feedback_timeout_sec'),
             'latch_motion_timeout': LaunchConfiguration(
                 'gripper_latch_motion_timeout'),
-            'cancel_disables_motor': LaunchConfiguration(
+            'cancel_stops_motion': LaunchConfiguration(
                 'gripper_cancel_disables_motor'),
             'motion_speed_percent': LaunchConfiguration(
                 'gripper_speed_percent'),
-            'motion_torque_percent': LaunchConfiguration(
+            'motion_force_percent': LaunchConfiguration(
                 'gripper_torque_percent'),
-            'motion_ramp_ms': LaunchConfiguration('gripper_ramp_ms'),
-            'max_current': LaunchConfiguration('gripper_max_current'),
             'position_tolerance': LaunchConfiguration(
                 'gripper_position_tolerance'),
             'command_max': LaunchConfiguration('gripper_command_max'),
@@ -210,7 +223,7 @@ def generate_launch_description():
             description='Also launch the two namespaced NERO drivers.'),
         DeclareLaunchArgument(
             'start_grippers', default_value='false',
-            description='Also launch both CTAG2F90-D CAN gripper drivers. '
+            description='Also launch both OmniPicker 3 CAN-FD gripper drivers. '
                         'Defaults off because the grippers may be disconnected; '
                         'set true only when both CAN grippers are present.'),
         DeclareLaunchArgument(
@@ -223,11 +236,14 @@ def generate_launch_description():
             description='Request gripper motor enable at driver startup. The '
                         'web UI can still auto-enable when a move is requested.'),
         DeclareLaunchArgument(
-            'gripper_can_fd', default_value='false',
-            description='Use CAN-FD frames for both grippers.'),
+            'gripper_transport', default_value='zqwl',
+            description='CAN backend for both grippers: zqwl or socketcan.'),
         DeclareLaunchArgument(
-            'gripper_brs', default_value='false',
-            description='Set BRS on CAN-FD gripper frames.'),
+            'gripper_can_fd', default_value='true',
+            description='Use CAN-FD frames for both OmniPicker 3 grippers.'),
+        DeclareLaunchArgument(
+            'gripper_brs', default_value='true',
+            description='Set BRS for the 5 Mbps OmniPicker 3 data phase.'),
         DeclareLaunchArgument(
             'gripper_goal_timeout_sec', default_value='10.0',
             description='Driver timeout for one gripper motion command.'),
@@ -236,29 +252,35 @@ def generate_launch_description():
             description='Maximum gripper feedback age while enabled or moving.'),
         DeclareLaunchArgument(
             'gripper_latch_motion_timeout', default_value='true',
-            description='Fault and disable the gripper motor on motion timeout.'),
+            description='Latch a fault when OP3 status feedback times out.'),
         DeclareLaunchArgument(
             'gripper_cancel_disables_motor', default_value='true',
-            description='Fault and disable the gripper motor on action cancel.'),
+            description='Stop the OP3 command stream when an action is canceled.'),
         DeclareLaunchArgument(
-            'gripper_speed_percent', default_value='25',
-            description='Gripper speed register 0x0104 (1..100 percent).'),
+            'gripper_speed_percent', default_value='50',
+            description='OmniPicker 3 velocity byte (1..100 percent).'),
         DeclareLaunchArgument(
             'gripper_torque_percent', default_value='100',
-            description='Gripper torque-limit register 0x0105 (1..100 '
-                        'percent). This limits torque; it is not force control.'),
+            description='OmniPicker 3 force/torque byte (1..100 percent). '
+                        'This is not a calibrated N/Nm force reading.'),
         DeclareLaunchArgument(
             'gripper_ramp_ms', default_value='200',
-            description='Gripper acceleration ramp register 0x0106 (0..1000 ms).'),
+            description='Deprecated compatibility argument; ignored by OP3.'),
         DeclareLaunchArgument(
             'gripper_max_current', default_value='200',
-            description='Gripper maximum-current register 0x0533 (1..1000).'),
+            description='Deprecated compatibility argument; ignored by OP3.'),
         DeclareLaunchArgument(
-            'gripper_position_tolerance', default_value='25',
+            'gripper_position_tolerance', default_value='8',
             description='Raw position counts treated as reaching the target.'),
         DeclareLaunchArgument(
-            'gripper_command_max', default_value='990',
-            description='Maximum closing position command for both grippers.'),
+            'gripper_command_max', default_value='1000',
+            description='Maximum closing command; 0 is open and 1000 is closed.'),
+        DeclareLaunchArgument(
+            'left_gripper_can_interface', default_value='can0',
+            description='SocketCAN interface for the left OP3.'),
+        DeclareLaunchArgument(
+            'right_gripper_can_interface', default_value='can1',
+            description='SocketCAN interface for the right OP3.'),
         DeclareLaunchArgument(
             'left_gripper_port',
             default_value=('/dev/serial/by-id/'
@@ -281,6 +303,25 @@ def generate_launch_description():
             description='When starting MoveIt, simulate execution without '
                         'commanding the drivers. Set false only for validated '
                         'real-hardware motion.'),
+        DeclareLaunchArgument(
+            'inference_rollout_script', default_value='',
+            description='Interactive joint16 rollout wrapper used by the '
+                        'Inference panel. Empty auto-discovers the deployment script.'),
+        DeclareLaunchArgument(
+            'inference_bridge_socket',
+            default_value='/tmp/nero_bimanual_vla_bridge.sock',
+            description='Unix socket used to probe and clear the VLA bridge.'),
+        DeclareLaunchArgument(
+            'inference_default_task',
+            default_value='Use the right arm to put apple into white box.',
+            description='Initial task sent to the interactive rollout.'),
+        DeclareLaunchArgument(
+            'inference_policy_port', default_value='7447',
+            description='Local policy server port checked before launch.'),
+        DeclareLaunchArgument(
+            'joint16_home_file', default_value='',
+            description='Native joint16 training/reset pose YAML. Empty auto-discovers '
+                        'deployment/config/joint16_home.yaml.'),
         DeclareLaunchArgument(
             'moveit_rviz', default_value='false',
             description='Open RViz when start_moveit is true.'),

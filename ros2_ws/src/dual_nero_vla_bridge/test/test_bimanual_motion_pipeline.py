@@ -9,6 +9,7 @@ import unittest
 
 import rclpy
 from control_msgs.action import FollowJointTrajectory
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import MoveItErrorCodes
 from moveit_msgs.srv import GetPositionIK
@@ -18,7 +19,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Int32
-from std_srvs.srv import SetBool
+from std_srvs.srv import Empty, SetBool
 
 from dual_nero_vla_bridge.bimanual_bridge import (
     ALL_JOINT_NAMES,
@@ -91,6 +92,16 @@ class FakeBimanualFeedback(Node):
     def __init__(self) -> None:
         super().__init__('fake_bimanual_vla_feedback')
         self.publish_grippers = True
+        self.gripper_status_values = {
+            side: {
+                'state': 'enabled',
+                'enabled': 'true',
+                'auto_enable_on_command': 'true',
+                'estop_latched': 'false',
+                'fault_reason': '',
+            }
+            for side in ('left', 'right')
+        }
         self.tcp_pubs = {
             side: self.create_publisher(
                 PoseStamped, f'/{side}/feedback/tcp_pose', 10)
@@ -104,6 +115,11 @@ class FakeBimanualFeedback(Node):
         self.gripper_pubs = {
             side: self.create_publisher(
                 Float32, f'/{side}_gripper/width', 10)
+            for side in ('left', 'right')
+        }
+        self.gripper_status_pubs = {
+            side: self.create_publisher(
+                DiagnosticArray, f'/{side}_gripper/status', 10)
             for side in ('left', 'right')
         }
         self.create_timer(0.05, self._publish)
@@ -131,6 +147,17 @@ class FakeBimanualFeedback(Node):
                 gripper.data = 0.09
                 self.gripper_pubs[side].publish(gripper)
 
+                status = DiagnosticArray()
+                item = DiagnosticStatus()
+                item.name = f'{side}_gripper'
+                values = dict(self.gripper_status_values[side])
+                item.values = [
+                    KeyValue(key=key, value=value)
+                    for key, value in values.items()
+                ]
+                status.status = [item]
+                self.gripper_status_pubs[side].publish(status)
+
 
 class FakeGripperCommandSink(Node):
     def __init__(self) -> None:
@@ -155,12 +182,26 @@ class FakeBimanualControlGate(Node):
         super().__init__('fake_bimanual_control_gate')
         self.enabled = {'left': False, 'right': False}
         self.requests = {'left': [], 'right': []}
+        self.emergency_stops = {'left': 0, 'right': 0}
+        self.gripper_emergency_stops = {'left': 0, 'right': 0}
         for side in ('left', 'right'):
             self.create_service(
                 SetBool,
                 f'/{side}/control_enable',
                 lambda request, response, side=side: self._handle(
                     side, request, response),
+            )
+            self.create_service(
+                Empty,
+                f'/{side}/emergency_stop',
+                lambda request, response, side=side: self._handle_emergency(
+                    side, response, gripper=False),
+            )
+            self.create_service(
+                Empty,
+                f'/{side}_gripper/emergency_stop',
+                lambda request, response, side=side: self._handle_emergency(
+                    side, response, gripper=True),
             )
 
     def _handle(self, side: str, request, response):
@@ -169,6 +210,13 @@ class FakeBimanualControlGate(Node):
         self.requests[side].append(enabled)
         response.success = True
         response.message = 'ok'
+        return response
+
+    def _handle_emergency(self, side: str, response, gripper: bool):
+        if gripper:
+            self.gripper_emergency_stops[side] += 1
+        else:
+            self.emergency_stops[side] += 1
         return response
 
 
@@ -296,12 +344,17 @@ class BimanualMotionPipelineTest(unittest.TestCase):
             target=self.executor.spin, daemon=True)
         self.spin_thread.start()
         self.client = BridgeClient(socket_path)
+        requires_gripper = (
+            allow_gripper_motion
+            and mode != 'dry_run'
+        )
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             status = self.client.request('ping')
             if (
                 status.get('state_ready')
                 and status.get('gripper_feedback_ready')
+                and (not requires_gripper or status.get('gripper_ready'))
                 and self.bridge._ik_client.service_is_ready()
             ):
                 return status
@@ -523,6 +576,102 @@ class BimanualMotionPipelineTest(unittest.TestCase):
             time.sleep(0.02)
         self.assertIn(False, self.control_gate.requests['left'])
         self.assertIn(False, self.control_gate.requests['right'])
+        self.assertEqual(self.control_gate.emergency_stops['left'], 1)
+        self.assertEqual(self.control_gate.emergency_stops['right'], 1)
+        # Normal Stop closes the arm control gate; it must not latch the
+        # gripper hardware emergency stop and poison the next rollout.
+        self.assertEqual(self.control_gate.gripper_emergency_stops['left'], 0)
+        self.assertEqual(self.control_gate.gripper_emergency_stops['right'], 0)
+
+    def test_latched_gripper_blocks_joint16_action_before_motion(self) -> None:
+        self._start(
+            'stream',
+            allow_real_motion=True,
+            allow_gripper_motion=True,
+            schema='joint16',
+            stream_rate_hz=20.0,
+        )
+        self.feedback.gripper_status_values['right'].update({
+            'state': 'fault',
+            'enabled': 'false',
+            'estop_latched': 'true',
+            'fault_reason': 'emergency stop',
+        })
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if not self.client.request('ping')['gripper_ready']:
+                break
+            time.sleep(0.02)
+        self.assertFalse(self.client.request('ping')['gripper_ready'])
+
+        response = self.client.request(
+            'send_action', action=_joint16_action())
+        self.assertFalse(response['accepted'])
+        self.assertIn('gripper driver is not ready', response['error'])
+        time.sleep(0.15)
+        self.assertEqual(self.stream_sink.commands, {'left': [], 'right': []})
+        self.assertEqual(self.gripper_sink.commands, {'left': [], 'right': []})
+
+    def test_clear_fault_allows_a_new_stream_after_stop(self) -> None:
+        self._start(
+            'stream',
+            allow_real_motion=True,
+            stream_rate_hz=20.0,
+        )
+        self.assertTrue(self.client.request(
+            'send_action', action=_rot6d_action())['accepted'])
+        self.assertTrue(self.client.request('stop')['stopped'])
+
+        deadline = time.monotonic() + 3.0
+        response = None
+        while time.monotonic() < deadline:
+            response = self.client.request('clear_fault')
+            if response.get('ok'):
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(response)
+        self.assertTrue(response['ok'])
+        self.assertIn('stop command received', response['previous_fault'])
+        self.assertIsNone(self.client.request('ping')['motion_fault'])
+        self.bridge._watchdog_tick()
+        self.assertIsNone(self.client.request('ping')['motion_fault'])
+
+        response = self.client.request('send_action', action=_rot6d_action())
+        self.assertTrue(response['ok'])
+        self.assertTrue(response['accepted'])
+
+    def test_repeated_abort_after_stop_does_not_stick_stop_handshake(self) -> None:
+        self._start(
+            'stream',
+            allow_real_motion=True,
+            stream_rate_hz=20.0,
+        )
+        self.assertTrue(self.client.request(
+            'send_action', action=_rot6d_action())['accepted'])
+        self.assertTrue(self.client.request('stop')['stopped'])
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            with self.bridge._motion_condition:
+                if not self.bridge._stop_in_progress:
+                    break
+            time.sleep(0.02)
+        with self.bridge._motion_condition:
+            self.assertFalse(self.bridge._stop_in_progress)
+
+        # A late watchdog/stream-worker abort must be a no-op once the fault is
+        # latched and the stop handshake has finished. Re-arming the stop flag
+        # here previously made clear_fault wait forever.
+        self.bridge._abort_motion('late watchdog after stop')
+        with self.bridge._motion_condition:
+            self.assertFalse(self.bridge._stop_in_progress)
+            self.assertFalse(self.bridge._trajectory_abort.is_set())
+
+        response = self.client.request('clear_fault')
+        self.assertTrue(response['ok'], response)
+        self.assertIsNone(response['motion_fault'])
+        self.bridge._watchdog_tick()
+        self.assertIsNone(self.client.request('ping')['motion_fault'])
 
     def test_stream_one_arm_ik_failure_latches_without_commands(self) -> None:
         self._start(

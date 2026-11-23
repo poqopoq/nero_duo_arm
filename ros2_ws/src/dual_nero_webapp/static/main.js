@@ -34,6 +34,9 @@ const app = {
   bothBusy: false,
   bothAction: null,
   toastTimer: null,
+  inference: null,
+  inferenceTaskEdited: false,
+  inferencePollTimer: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -112,10 +115,134 @@ function updateMotionUi(motion) {
   motionStatusEl.className = `safety-summary ${tone}`;
 }
 
+function inferenceLocked() {
+  return app.inference?.manual_control_locked === true;
+}
+
+function updateInferenceUi(info) {
+  if (!info) return;
+  app.inference = info;
+  const stateEl = $('#inference-state');
+  const bridgeEl = $('#inference-bridge');
+  const warningEl = $('#inference-warning');
+  const logEl = $('#inference-log');
+  const taskEl = $('#inference-task');
+  const launchButton = $('#inference-launch');
+  const startButton = $('#inference-start');
+  const resetButton = $('#inference-reset');
+  const homeButton = $('#inference-home');
+  const stopButton = $('#inference-stop');
+  const taskButton = $('#inference-task-apply');
+  const clearFaultButton = $('#inference-clear-fault');
+  if (!stateEl || !bridgeEl || !warningEl || !logEl || !taskEl) return;
+
+  const labels = {
+    stopped: 'stopped',
+    loading: 'loading…',
+    idle: 'idle — not started',
+    starting: 'starting…',
+    running: 'running',
+    resetting: 'resetting…',
+    stopping: 'stopping…',
+    fault: 'fault',
+  };
+  const tones = {
+    idle: 'ok',
+    running: 'ok',
+    loading: 'warn',
+    starting: 'warn',
+    resetting: 'warn',
+    stopping: 'warn',
+    fault: 'bad',
+  };
+  stateEl.textContent = labels[info.state] || info.state || 'unknown';
+  stateEl.className = `pill ${tones[info.state] || ''}`.trim();
+
+  const bridge = info.bridge || {};
+  let bridgeText = 'bridge offline';
+  let bridgeTone = 'bad';
+  if (bridge.reachable) {
+    if (bridge.motion_fault) {
+      bridgeText = 'bridge motion fault';
+      bridgeTone = 'bad';
+    } else if (bridge.schema !== 'joint16') {
+      bridgeText = `bridge ${bridge.schema || 'schema?'}`;
+      bridgeTone = 'bad';
+    } else if (bridge.dry_run === true) {
+      bridgeText = 'bridge joint16 · dry-run';
+      bridgeTone = 'warn';
+    } else {
+      bridgeText = `bridge joint16 · ${bridge.execution_mode || 'live'}`;
+      bridgeTone = 'ok';
+    }
+  }
+  bridgeEl.textContent = bridgeText;
+  bridgeEl.className = `pill ${bridgeTone}`.trim();
+  bridgeEl.title = bridge.error || '';
+
+  const warnings = [];
+  if (info.bridge_fault) {
+    warnings.push(
+      `Bridge fault latched: ${info.bridge_fault}. Stop inference, then use Clear bridge fault.`);
+  } else if (bridge.reachable && bridge.schema && bridge.schema !== 'joint16') {
+    warnings.push('Bridge schema is not joint16. Restart the bridge with action_schema:=joint16.');
+  } else if (!bridge.reachable) {
+    warnings.push(`Bridge is not reachable: ${bridge.error || 'socket unavailable'}.`);
+  }
+  if (info.error) warnings.push(info.error);
+  else if (info.state === 'idle') {
+    warnings.push('Rollout is loaded but /start has NOT been sent. Confirm the workspace, then press Run.');
+  } else if (info.state === 'loading') {
+    warnings.push('Loading hardware and policy. Launch never sends /start automatically.');
+  } else if (bridge.dry_run === true && info.active) {
+    warnings.push('The bridge is in dry-run mode; policy actions will not command the arms.');
+  }
+  if (warnings.length) {
+    warningEl.textContent = warnings.join(' ');
+    warningEl.classList.remove('hidden');
+    warningEl.classList.toggle('bad', Boolean(info.bridge_fault || info.state === 'fault'));
+  } else {
+    warningEl.textContent = '';
+    warningEl.classList.add('hidden');
+    warningEl.classList.remove('bad');
+  }
+
+  if (launchButton) launchButton.disabled = !info.can_launch || Boolean(info.bridge_fault);
+  if (startButton) startButton.disabled = !info.can_start || Boolean(info.bridge_fault);
+  if (resetButton) resetButton.disabled = !info.can_reset;
+  if (homeButton) homeButton.disabled = info.active;
+  if (stopButton) stopButton.disabled = !info.can_stop;
+  if (clearFaultButton) clearFaultButton.disabled = !info.can_clear_fault;
+  const canEditTask = !info.active || info.state === 'idle' || info.state === 'running';
+  const canSendTask = info.state === 'idle' || info.state === 'running';
+  taskEl.disabled = !canEditTask;
+  if (taskButton) taskButton.disabled = !canSendTask;
+  if (!app.inferenceTaskEdited && !canEditTask && info.task) {
+    taskEl.value = info.task;
+  } else if (!app.inferenceTaskEdited && !info.active && info.initial_task) {
+    taskEl.value = info.initial_task;
+  }
+
+  if (Array.isArray(info.log)) {
+    const stick = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 32;
+    logEl.textContent = info.log.length
+      ? info.log.join('\n') : 'Inference process not launched.';
+    if (stick) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  if (app.config) {
+    refreshMotionButtons();
+    for (const side of app.config.sides) {
+      updateSafetyUi(side);
+      updateGripperUi(side);
+    }
+  }
+}
+
 function refreshMotionButtons() {
   const sides = app.config?.sides || [];
   const sideBusy = sides.some((side) => app.sides[side]?.motionBusy);
-  const anyBusy = sideBusy || app.bothBusy;
+  const anyBusy = sideBusy || app.bothBusy || inferenceLocked();
   for (const side of sides) {
     const state = app.sides[side];
     const sendButton = document.querySelector(`.panel[data-side="${side}"] .btn-send`);
@@ -133,6 +260,7 @@ function refreshMotionButtons() {
   }
   const bothSend = $('#both-send');
   const bothPark = $('#both-park');
+  const inferenceHome = $('#inference-home');
   if (bothSend) {
     bothSend.disabled = anyBusy || !app.bothSupported;
     bothSend.textContent = app.bothBusy && app.bothAction === 'move'
@@ -143,6 +271,13 @@ function refreshMotionButtons() {
       || app.config?.park?.available?.both === false;
     bothPark.textContent = app.bothBusy && app.bothAction === 'park'
       ? 'Parking both…' : 'Both Park';
+  }
+  if (inferenceHome) {
+    inferenceHome.disabled = anyBusy
+      || app.motion?.available === false
+      || app.config?.joint16_home?.available === false;
+    inferenceHome.textContent = app.bothBusy && app.bothAction === 'home'
+      ? 'Homing…' : 'Training Home';
   }
 }
 
@@ -242,20 +377,22 @@ function updateSafetyUi(side) {
   const gateButton = panel.querySelector('.btn-gate');
   gateButton.textContent = state.gate ? 'Close gate' : 'Open gate';
   gateButton.classList.toggle('active', state.gate);
+  gateButton.disabled = inferenceLocked();
 
   const enableButton = panel.querySelector('.btn-enable');
   enableButton.textContent = state.enabled === true ? 'Disable motors' : 'Enable motors';
   enableButton.classList.toggle('active', state.enabled === true);
+  enableButton.disabled = inferenceLocked();
 
   const clearButton = panel.querySelector('.btn-clear-faults');
   const recoverButton = panel.querySelector('.btn-recover');
   if (clearButton) {
-    clearButton.disabled = Boolean(state.healthBusy) || !healthFresh;
+    clearButton.disabled = Boolean(state.healthBusy) || !healthFresh || inferenceLocked();
     clearButton.textContent = state.healthBusy === 'clear' ? 'Clearing…' : 'Clear faults';
   }
   if (recoverButton) {
     recoverButton.disabled = Boolean(state.healthBusy) || !healthFresh
-      || state.gate || state.motionBusy;
+      || state.gate || state.motionBusy || inferenceLocked();
     recoverButton.textContent = state.healthBusy === 'recover' ? 'Recovering…' : 'Recover arm';
   }
 
@@ -292,7 +429,7 @@ function updateGripperUi(side) {
   const positionMin = Number.isFinite(Number(config.position_min))
     ? Number(config.position_min) : 0;
   const positionMax = Number.isFinite(Number(config.position_max))
-    ? Number(config.position_max) : 990;
+    ? Number(config.position_max) : 1000;
   slider.min = String(positionMin);
   slider.max = String(positionMax);
 
@@ -352,7 +489,8 @@ function updateGripperUi(side) {
     state.gripperPosition = target;
     valueEl.textContent = String(Math.round(target));
   }
-  slider.disabled = !motionAllowed || motionActive || Boolean(state.gripperBusy);
+  slider.disabled = !motionAllowed || motionActive || Boolean(state.gripperBusy)
+    || inferenceLocked();
 
   speedInput.min = String(config.speed_percent_min ?? 1);
   speedInput.max = String(config.speed_percent_max ?? 100);
@@ -361,17 +499,17 @@ function updateGripperUi(side) {
     speedInput.value = String(gripper.motion_speed_percent);
   }
   speedInput.disabled = !motionAllowed || !driverStatusFresh || motionActive
-    || Boolean(state.gripperBusy);
+    || Boolean(state.gripperBusy) || inferenceLocked();
 
   const autoEnable = gripper?.auto_enable_on_command === true;
   const canMove = motionAllowed && fresh && driverStatusFresh
     && (driverEnabled || autoEnable) && driverState !== 'fault' && !motionActive
-    && !state.gripperBusy;
+    && !state.gripperBusy && !inferenceLocked();
   applyButton.disabled = !canMove;
   openButton.disabled = !canMove;
   closeButton.disabled = !canMove;
   clearObstructionButton.disabled = !driverStatusFresh || motionActive
-    || Boolean(state.gripperBusy);
+    || Boolean(state.gripperBusy) || inferenceLocked();
 }
 
 function feedbackPoseReady(state) {
@@ -411,10 +549,17 @@ function updatePoseModeHint() {
 
 function applyGripperPose(side) {
   const state = app.sides[side];
-  const joint = app.robot?.joints?.[`${side}_ctag_left_1_joint`];
   const jointRad = state?.gripper?.joint_rad;
-  if (joint && typeof jointRad === 'number' && Number.isFinite(jointRad)) {
-    joint.setJointValue(jointRad);
+  if (!app.robot || typeof jointRad !== 'number' || !Number.isFinite(jointRad)) {
+    return;
+  }
+  const coupledJoints = [
+    'wide1', 'wide2', 'wide3', 'wide_loop',
+    'narrow1', 'narrow2', 'narrow3', 'narrow_loop',
+  ];
+  for (const name of coupledJoints) {
+    const joint = app.robot.joints[`${side}_op3_${name}_joint`];
+    if (joint) joint.setJointValue(jointRad);
   }
 }
 
@@ -537,7 +682,7 @@ function buildSliders() {
       moveGripper(side, Number(app.config?.gripper?.open_position ?? 0));
     });
     panel.querySelector('.btn-gripper-close').addEventListener('click', () => {
-      moveGripper(side, Number(app.config?.gripper?.closed_position ?? 990));
+      moveGripper(side, Number(app.config?.gripper?.closed_position ?? 1000));
     });
     panel.querySelector('.btn-gripper-clear-obstruction').addEventListener('click', () => {
       clearGripperObstruction(side);
@@ -786,6 +931,72 @@ async function parkBoth() {
   const resultDryRun = typeof result.dry_run === 'boolean' ? result.dry_run : dryRun;
   showToast(
     result.message || 'both arms: MoveIt park motion completed',
+    resultDryRun ? 'warn' : 'ok',
+  );
+}
+
+async function moveInferenceHome() {
+  if (inferenceLocked()) {
+    showToast('stop inference before moving to the training home', 'error');
+    return;
+  }
+  if (app.bothBusy) return;
+  const readinessError = bothReadinessError();
+  if (readinessError) {
+    showToast(readinessError, 'error');
+    return;
+  }
+
+  const home = app.config?.joint16_home?.positions;
+  if (!home?.left || !home?.right) {
+    showToast('joint16 training home is not configured in the webapp', 'error');
+    return;
+  }
+  const formatPose = (positions) => positions.map((value) => value.toFixed(5)).join(', ');
+  const dryRun = app.motion?.dry_run === true;
+  const confirmed = window.confirm(
+    'Move BOTH arms to the joint16 TRAINING HOME pose?\n\n'
+    + `Left:  [${formatPose(home.left)}]\n`
+    + `Right: [${formatPose(home.right)}]\n\n`
+    + (dryRun ? '' : 'If an arm is outside its joint limits after power-up, it will first be '
+      + 'enabled and moved back inside the guarded range, then MoveIt will plan home. ')
+    + 'MoveIt will plan one synchronized 14-joint trajectory at the configured low speed. '
+    + 'The workspace must be clear of people and unmodelled obstacles.'
+    + (dryRun ? '\n\nDRY-RUN is active: the robot will NOT move.' : ''),
+  );
+  if (!confirmed) return;
+
+  setBothMotionBusy(true, 'home');
+  showToast(
+    `both arms: MoveIt ${dryRun ? 'dry-run ' : ''}moving to joint16 training home…`,
+    dryRun ? 'warn' : '',
+  );
+  let result;
+  try {
+    result = await postJson('/api/inference/home', { confirm: true });
+  } catch (error) {
+    result = { ok: false, error: error.message || 'joint16 home request failed' };
+  } finally {
+    setBothMotionBusy(false, 'home');
+  }
+  if (!result.ok) {
+    showToast(`training home: ${result.error || 'MoveIt motion failed'}`, 'error');
+    return;
+  }
+  if (result.positions && !Array.isArray(result.positions)) {
+    for (const side of app.config.sides) {
+      const positions = result.positions[side];
+      if (!Array.isArray(positions) || positions.length !== app.jointNames.length) continue;
+      for (let index = 0; index < positions.length; index += 1) {
+        setSlider(side, index, positions[index], false);
+      }
+      app.sides[side].poseInitialized = true;
+      applyArmPose(side);
+    }
+  }
+  const resultDryRun = typeof result.dry_run === 'boolean' ? result.dry_run : dryRun;
+  showToast(
+    result.message || 'both arms: MoveIt motion to joint16 training home completed',
     resultDryRun ? 'warn' : 'ok',
   );
 }
@@ -1039,6 +1250,131 @@ async function cancelMotion() {
   showToast(result.message || `${side}: cancellation requested`, 'warn');
 }
 
+async function inferenceRequest(url, body, successMessage) {
+  let result;
+  try {
+    result = await postJson(url, body || {}, 15000);
+  } catch (error) {
+    result = { ok: false, error: error.message || 'inference request failed' };
+  }
+  if (result.inference) updateInferenceUi(result.inference);
+  if (!result.ok) {
+    showToast(result.error || 'inference request failed', 'error');
+    return result;
+  }
+  showToast(result.message || successMessage || 'inference command accepted', 'ok');
+  await refreshInferenceStatus();
+  return result;
+}
+
+async function refreshInferenceStatus() {
+  try {
+    const response = await fetch('/api/inference', { cache: 'no-store' });
+    if (response.ok) updateInferenceUi(await response.json());
+  } catch (error) {
+    console.error('inference status failed', error);
+  }
+}
+
+function scheduleInferencePoll() {
+  clearTimeout(app.inferencePollTimer);
+  app.inferencePollTimer = setTimeout(async () => {
+    await refreshInferenceStatus();
+    scheduleInferencePoll();
+  }, 1000);
+}
+
+async function launchInference() {
+  const taskEl = $('#inference-task');
+  const task = taskEl?.value.trim() || '';
+  if (!task) {
+    showToast('enter a task before launching inference', 'error');
+    return;
+  }
+  const confirmed = window.confirm(
+    'Launch the joint16 rollout process?\n\n'
+    + 'This connects to the policy server and robot, but it does NOT send /start. '
+    + 'The arms remain under the current hold until you explicitly press Run.',
+  );
+  if (!confirmed) return;
+  app.inferenceTaskEdited = false;
+  await inferenceRequest('/api/inference/launch', { task }, 'rollout launched; /start not sent');
+}
+
+async function startInference() {
+  const task = app.inference?.task || $('#inference-task')?.value.trim() || '';
+  const confirmed = window.confirm(
+    'Run the VLA policy now?\n\n'
+    + `Task: ${task}\n\n`
+    + 'This sends /start and the robot may move immediately. Confirm the workspace '
+    + 'is clear, the training home pose is correct, bridge has no fault, and the '
+    + 'hardware emergency stop is ready.',
+  );
+  if (!confirmed) return;
+  await inferenceRequest('/api/inference/start', { confirm: true }, 'sent /start');
+}
+
+async function resetInference() {
+  const confirmed = window.confirm(
+    'Reset inference and return both arms and grippers to the joint16 TRAINING HOME?\n\n'
+    + 'This sends /reset, pauses inference, restores the original task, and moves the '
+    + 'robot to deployment/config/joint16_home.yaml. Confirm the path is clear.',
+  );
+  if (!confirmed) return;
+  await inferenceRequest('/api/inference/reset', { confirm: true }, 'sent /reset');
+}
+
+async function stopInference() {
+  await inferenceRequest(
+    '/api/inference/stop', {},
+    'inference stop requested; bridge motion gate will close');
+}
+
+async function applyInferenceTask() {
+  const taskEl = $('#inference-task');
+  const task = taskEl?.value.trim() || '';
+  if (!task) {
+    showToast('task must not be empty', 'error');
+    return;
+  }
+  const running = app.inference?.state === 'running';
+  const confirmed = window.confirm(
+    `Set the policy task${running ? ' while it is running' : ''}?\n\n`
+    + `Task: ${task}\n\n`
+    + 'The new instruction applies from the next policy inference and can change robot motion.',
+  );
+  if (!confirmed) return;
+  const result = await inferenceRequest(
+    '/api/inference/task', { task }, 'subtask sent');
+  if (result.ok) app.inferenceTaskEdited = false;
+}
+
+async function clearBridgeFault() {
+  const confirmed = window.confirm(
+    'Clear the latched bridge motion fault?\n\n'
+    + 'Only do this after inference has stopped and the arms are stationary. '
+    + 'This clears the software stop latch; it does not move the robot and does not '
+    + 'replace the hardware emergency stop.',
+  );
+  if (!confirmed) return;
+  await inferenceRequest(
+    '/api/inference/clear_fault', { confirm: true }, 'bridge fault cleared');
+}
+
+function setupInferenceUi() {
+  const taskEl = $('#inference-task');
+  taskEl?.addEventListener('input', () => {
+    app.inferenceTaskEdited = true;
+  });
+  $('#inference-launch')?.addEventListener('click', launchInference);
+  $('#inference-start')?.addEventListener('click', startInference);
+  $('#inference-reset')?.addEventListener('click', resetInference);
+  $('#inference-home')?.addEventListener('click', moveInferenceHome);
+  $('#inference-stop')?.addEventListener('click', stopInference);
+  $('#inference-task-apply')?.addEventListener('click', applyInferenceTask);
+  $('#inference-clear-fault')?.addEventListener('click', clearBridgeFault);
+}
+
 function updateFeedback(side, payload) {
   const state = app.sides[side];
   if (!state || !payload) return;
@@ -1101,6 +1437,7 @@ function connectWebSocket() {
       return;
     }
     if (message.type === 'state' && message.data) {
+      updateInferenceUi(message.inference);
       updateMotionUi(message.motion);
       for (const side of app.config.sides) updateFeedback(side, message.data[side]);
     } else if (message.type === 'motion_result' && message.data) {
@@ -1363,6 +1700,10 @@ async function boot() {
 
   updateMotionUi(app.config.motion);
   buildSliders();
+  setupInferenceUi();
+  updateInferenceUi(app.config.inference);
+  refreshInferenceStatus();
+  scheduleInferencePoll();
   for (const side of app.config.sides) updateGripperUi(side);
   setupCameras();
   connectWebSocket();

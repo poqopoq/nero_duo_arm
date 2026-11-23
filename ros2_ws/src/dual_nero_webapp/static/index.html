@@ -49,6 +49,30 @@
         </div>
       </section>
 
+      <section class="panel inference-panel" id="inference-panel">
+        <div class="panel-head">
+          <h2>Inference</h2>
+          <span id="inference-state" class="pill">stopped</span>
+          <span id="inference-bridge" class="pill">bridge –</span>
+        </div>
+        <div class="inference-task-row">
+          <label for="inference-task">Task</label>
+          <input id="inference-task" type="text" maxlength="1000" autocomplete="off"
+                 value="Use the right arm to put apple into white box." />
+          <button id="inference-task-apply" title="Send /subtask. The new instruction applies from the next policy inference.">Set</button>
+        </div>
+        <div class="button-row inference-buttons">
+          <button id="inference-home" class="btn-park" title="Move both arms to the joint16 training home with MoveIt. Requires inference to be stopped.">Training Home</button>
+          <button id="inference-launch" title="Start the rollout process and load hardware/policy. This does not send /start.">Launch</button>
+          <button id="inference-start" class="btn-send" title="Send /start. The policy will move the robot immediately.">Run</button>
+          <button id="inference-reset" title="Send /reset: pause inference and return both arms and grippers to the joint16 training home.">Reset</button>
+          <button id="inference-stop" class="danger" title="Send /stop and end the interactive rollout. The bridge may latch a stop fault.">Stop</button>
+          <button id="inference-clear-fault" title="Clear a latched bridge stop fault when no inference process is running.">Clear bridge fault</button>
+        </div>
+        <div id="inference-warning" class="inference-warning hidden"></div>
+        <pre id="inference-log" class="inference-log">Inference process not launched.</pre>
+      </section>
+
       <section class="panel" data-side="left">
         <div class="panel-head">
           <h2>Left arm</h2>
@@ -63,11 +87,11 @@
         <div class="gripper-block">
           <div class="gripper-slider">
             <label for="left-gripper-position">Grip</label>
-            <input id="left-gripper-position" type="range" min="0" max="990" step="1" value="0" data-role="gripper-position" />
+            <input id="left-gripper-position" type="range" min="0" max="1000" step="1" value="0" data-role="gripper-position" />
             <span class="gripper-value" data-role="gripper-value">0</span>
           </div>
           <div class="gripper-config">
-            <label>Speed <input type="number" min="1" max="100" step="1" value="25" data-role="gripper-speed" /> %</label>
+            <label>Speed <input type="number" min="1" max="100" step="1" value="50" data-role="gripper-speed" /> %</label>
           </div>
           <div class="button-row gripper-buttons">
             <button class="btn-gripper-apply" disabled>Apply grip</button>
@@ -107,11 +131,11 @@
         <div class="gripper-block">
           <div class="gripper-slider">
             <label for="right-gripper-position">Grip</label>
-            <input id="right-gripper-position" type="range" min="0" max="990" step="1" value="0" data-role="gripper-position" />
+            <input id="right-gripper-position" type="range" min="0" max="1000" step="1" value="0" data-role="gripper-position" />
             <span class="gripper-value" data-role="gripper-value">0</span>
           </div>
           <div class="gripper-config">
-            <label>Speed <input type="number" min="1" max="100" step="1" value="25" data-role="gripper-speed" /> %</label>
+            <label>Speed <input type="number" min="1" max="100" step="1" value="50" data-role="gripper-speed" /> %</label>
           </div>
           <div class="button-row gripper-buttons">
             <button class="btn-gripper-apply" disabled>Apply grip</button>

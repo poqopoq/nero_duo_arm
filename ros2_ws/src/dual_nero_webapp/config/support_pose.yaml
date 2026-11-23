@@ -1,21 +1,21 @@
 # Mirror of deployment/config/support_pose.yaml for the installed webapp.
-# Left J4/J7 use the recover_joint_limits targets because the gripper-equipped
-# arm settled past both caps. Keep these values synchronized with the canonical
+# Both arms' Park targets mirror the joint16 training home so they are ready for
+# replay or policy startup. Keep these values synchronized with the canonical
 # MoveIt park pose.
 support_pose:
   left:
-    - -1.579034281
-    - -1.757145131
-    - -0.034435346
-    - 2.115
-    - -0.029373891
-    - -0.003665191
-    - 1.545
+    - -0.07127925
+    - -1.36069359
+    - 0.02806489
+    - 1.88160456
+    - 0.04045673
+    - 0.00094248
+    - 1.57072651
   right:
-    - 1.666667263
-    - -0.246841916
-    - -0.438095096
-    - 1.094618147
-    - -0.688130964
-    - 0.528677684
-    - 1.29861223
+    - -0.07127925
+    - -1.36069359
+    - 0.02806489
+    - 1.88160456
+    - 0.04045673
+    - 0.00094248
+    - 1.57072651
