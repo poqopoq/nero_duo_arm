@@ -11,8 +11,9 @@ driver first:
 2. clear latched joint faults and reset the motion controller;
 3. enable the motors and verify that all seven brakes released;
 4. move joint7 first, then any other slightly out-of-limit joint, and finally
-   joint4 to the safe support-pose targets (this ordering clears the wrist
-   collision before moving joint4);
+   joint4 to intermediate in-limit recovery targets (this ordering clears the
+   wrist collision before moving joint4); MoveIt can then move to the actual
+   training home;
 5. close the gate and keep the motors enabled so gravity cannot pull the arm
    back to the mechanical stops.
 
@@ -25,7 +26,7 @@ the check after every motor-disabled -> motor-enabled transition.
 
 The physical stop pose is intentionally not written into ``support_pose.yaml``:
 that file is the in-limit MoveIt Park target, not the power-off resting
-position.
+position or the intermediate recovery pose.
 """
 
 from __future__ import annotations

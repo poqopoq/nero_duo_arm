@@ -1,0 +1,22 @@
+# Native joint16 training/reset pose for pi05_place_apple_box_staged_joint16.
+#
+# This remains separate from support_pose.yaml because it includes gripper widths
+# and is used by native joint16 reset.
+# Gripper widths are part of the 16-D joint16 state and reset action.
+positions:
+  right_nero_joint_1: -0.07127925
+  right_nero_joint_2: -1.36069359
+  right_nero_joint_3: 0.02806489
+  right_nero_joint_4: 1.88160456
+  right_nero_joint_5: 0.04045673
+  right_nero_joint_6: 0.00094248
+  right_nero_joint_7: 1.57072651
+  left_nero_joint_1: -0.07127925
+  left_nero_joint_2: -1.36069359
+  left_nero_joint_3: 0.02806489
+  left_nero_joint_4: 1.88160456
+  left_nero_joint_5: 0.04045673
+  left_nero_joint_6: 0.00094248
+  left_nero_joint_7: 1.57072651
+  right_gripper_width: 0.09
+  left_gripper_width: 0.09

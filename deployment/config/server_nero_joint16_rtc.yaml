@@ -1,0 +1,102 @@
+# LeRobot 0.6.2 remote policy server for the RoboTwin 16-D NERO joint
+# checkpoint, served through guided Real-Time Chunking (RTC).
+#
+# The checkpoint itself does not need to be trained for RTC: this uses
+# ``rtc_guided``, which conditions the next chunk on the still-executing prefix.
+# The client must request the matching remote mode:
+#   --inference.mode=rtc_guided
+#   --inference.chunk_merge=append
+#
+# On the GPU host, run the one-time compatibility patch first:
+#   python3 deployment/scripts/patch_lerobot_pi05_checkpoint_compat.py \
+#     --lerobot-root /home/zhiyuan/lerobot
+deployment: nero-bimanual-joint16
+model:
+  repo_or_path: /Data/zhiyuan/checkpoints/pi05_place_apple_box_staged_joint16/checkpoints/030000/pretrained_model
+  revision: null
+  device: cuda
+execution:
+  # Keep RTC-only here so n_action_steps remains unset. RTC consumes the full
+  # 50-step model prediction and overlaps it with the currently executing chunk.
+  supported_modes: [rtc_guided]
+  action_fps: 30.0
+  rtc:
+    enabled: true
+    mode: guided
+    prefix_attention_schedule: LINEAR
+    # Remote inference takes ~0.25 s, i.e. ~8-9 action steps at 30 Hz.
+    # A horizon of 10 would leave only 1-2 overlapping steps and barely
+    # smooth the chunk boundary; 25 gives a usable overlap window.
+    max_guidance_weight: 10.0
+    execution_horizon: 15
+    debug: false
+    debug_maxlen: 100
+  action_deadline_s: 5.0
+  idle_timeout_s: 10.0
+  warmup_calls: 2
+language:
+  enabled: false
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/0.0.0.0:7447]
+semantics: nero-bimanual-joint16-rad-metres-v1
+robot_type: nero_dual_joint16
+features:
+  - name: observation.state
+    shape: [16]
+    dtype: float32
+    names:
+      - right_nero_joint_1
+      - right_nero_joint_2
+      - right_nero_joint_3
+      - right_nero_joint_4
+      - right_nero_joint_5
+      - right_nero_joint_6
+      - right_nero_joint_7
+      - left_nero_joint_1
+      - left_nero_joint_2
+      - left_nero_joint_3
+      - left_nero_joint_4
+      - left_nero_joint_5
+      - left_nero_joint_6
+      - left_nero_joint_7
+      - right_gripper_width
+      - left_gripper_width
+    semantics: nero-bimanual-joint16-rad-metres-v1
+  - name: observation.images.base_0_rgb
+    shape: [224, 224, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-head-d435-v1
+  - name: observation.images.left_wrist_0_rgb
+    shape: [224, 224, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-left-d405-v1
+  - name: observation.images.right_wrist_0_rgb
+    shape: [224, 224, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-right-d405-v1
+action_feature:
+  name: action
+  shape: [16]
+  dtype: float32
+  names:
+    - right_nero_joint_1
+    - right_nero_joint_2
+    - right_nero_joint_3
+    - right_nero_joint_4
+    - right_nero_joint_5
+    - right_nero_joint_6
+    - right_nero_joint_7
+    - left_nero_joint_1
+    - left_nero_joint_2
+    - left_nero_joint_3
+    - left_nero_joint_4
+    - left_nero_joint_5
+    - left_nero_joint_6
+    - left_nero_joint_7
+    - right_gripper_width
+    - left_gripper_width
+  semantics: nero-bimanual-joint16-rad-metres-v1

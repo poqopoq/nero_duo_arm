@@ -43,6 +43,10 @@ class NeroBimanualConfig(RobotConfig):
 
     request_timeout_s: float = 2.0
     stop_on_disconnect: bool = True
+    # Optional YAML file containing the checkpoint's native reset/home pose.
+    # When set, the rollout uses these action values for /reset instead of the
+    # measured pose captured at connect time.
+    home_position_file: str = ''
 
     def __post_init__(self) -> None:
         super().__post_init__()

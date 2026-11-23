@@ -1,19 +1,17 @@
-# Both poses were captured from live feedback after installing the grippers on
-# 2026-11-11. The left arm settled past the J4/J7 limits while unsupported, so
-# those joints use the recover_joint_limits targets (inside the caps). The right
-# arm was already inside all limits.
+# Both Park targets deliberately mirror the joint16 training home so Park leaves
+# either arm ready for replay or policy startup.
 support_pose:
-  left_joint1: -1.579034281
-  left_joint2: -1.757145131
-  left_joint3: -0.034435346
-  left_joint4: 2.115
-  left_joint5: -0.029373891
-  left_joint6: -0.003665191
-  left_joint7: 1.545000000
-  right_joint1: 1.666667263
-  right_joint2: -0.246841916
-  right_joint3: -0.438095096
-  right_joint4: 1.094618147
-  right_joint5: -0.688130964
-  right_joint6: 0.528677684
-  right_joint7: 1.298612230
+  left_joint1: -0.07127925
+  left_joint2: -1.36069359
+  left_joint3: 0.02806489
+  left_joint4: 1.88160456
+  left_joint5: 0.04045673
+  left_joint6: 0.00094248
+  left_joint7: 1.57072651
+  right_joint1: -0.07127925
+  right_joint2: -1.36069359
+  right_joint3: 0.02806489
+  right_joint4: 1.88160456
+  right_joint5: 0.04045673
+  right_joint6: 0.00094248
+  right_joint7: 1.57072651

@@ -5,6 +5,13 @@
 # - pi05_place_apple_box_staged_joint16 emits absolute joint targets in radians
 #   and physical gripper widths in metres.
 # - It does not use TCP/rot6d IK, so the bridge must run action_schema=joint16.
+#
+# On the GPU host, run the one-time compatibility patch first:
+#   python3 deployment/scripts/patch_lerobot_pi05_checkpoint_compat.py \
+#     --lerobot-root /home/zhiyuan/lerobot
+# The checkpoint was trained with newer PI05 training-only config fields.
+# Select a GPU with enough free memory via CUDA_VISIBLE_DEVICES; the loaded
+# model uses about 9.5 GB.
 deployment: nero-bimanual-joint16
 model:
   repo_or_path: /Data/zhiyuan/checkpoints/pi05_place_apple_box_staged_joint16/checkpoints/030000/pretrained_model

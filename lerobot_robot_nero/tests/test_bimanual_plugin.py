@@ -5,9 +5,11 @@ import socket
 import tempfile
 import threading
 import unittest
+from pathlib import Path
 
 import cv2
 import numpy as np
+import yaml
 
 from lerobot.robots import RobotConfig, make_robot_from_config
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
@@ -145,7 +147,21 @@ class NeroBimanualPluginTest(unittest.TestCase):
         self.assertEqual(state_names('joint16'), expected)
         robot = NeroBimanual(NeroBimanualConfig(action_schema='joint16'))
         self.assertEqual(tuple(robot.action_features), expected)
+        self.assertEqual(robot.position_hold_action_keys, expected)
         self.assertEqual(tuple(robot.observation_features)[:16], expected)
+
+    def test_joint16_reset_position_comes_from_the_native_home_file(self) -> None:
+        expected = state_names('joint16')
+        positions = {name: index / 10 for index, name in enumerate(expected)}
+        with tempfile.TemporaryDirectory(prefix='nero-joint16-home-') as directory:
+            path = Path(directory) / 'home.yaml'
+            path.write_text(yaml.safe_dump({'positions': positions}), encoding='utf-8')
+            robot = NeroBimanual(NeroBimanualConfig(
+                action_schema='joint16',
+                home_position_file=str(path),
+            ))
+        self.assertEqual(tuple(robot.rollout_reset_position), expected)
+        self.assertAlmostEqual(robot.rollout_reset_position['right_gripper_width'], 1.4)
 
     def test_closed_loop(self) -> None:
         with MockBimanualBridge() as bridge:

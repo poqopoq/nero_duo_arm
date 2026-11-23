@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import logging
+import math
+from pathlib import Path
 
 import cv2
 import numpy as np
+import yaml
 from lerobot.robots import Robot
 
 from .bridge_client import BridgeClient, BridgeError
@@ -38,6 +41,39 @@ def state_names(schema: str) -> tuple[str, ...]:
     return (*_pose_names('left', schema), *_pose_names('right', schema))
 
 
+def load_reset_position(path: str, names: tuple[str, ...]) -> dict[str, float] | None:
+    """Load and validate a checkpoint-native reset position from YAML."""
+    configured = str(path or '').strip()
+    if not configured:
+        return None
+    source = Path(configured).expanduser()
+    try:
+        document = yaml.safe_load(source.read_text(encoding='utf-8'))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f'failed to load reset position {source}: {exc}') from exc
+    positions = document.get('positions') if isinstance(document, dict) else None
+    if not isinstance(positions, dict):
+        raise ValueError(f'{source} must contain a positions mapping')
+    expected = set(names)
+    actual = set(positions)
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f'missing: {", ".join(missing)}')
+        if unexpected:
+            details.append(f'unexpected: {", ".join(unexpected)}')
+        raise ValueError(f'{source} does not match the {len(names)}-D action schema: ' + '; '.join(details))
+    try:
+        reset = {name: float(positions[name]) for name in names}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{source} contains a non-numeric reset position') from exc
+    if not all(math.isfinite(value) for value in reset.values()):
+        raise ValueError(f'{source} contains a non-finite reset position')
+    return reset
+
+
 class NeroBimanual(Robot):
     """A bimanual absolute end-effector robot using two NERO arms.
 
@@ -59,6 +95,7 @@ class NeroBimanual(Robot):
         self._client = BridgeClient(config.bridge_socket, config.request_timeout_s)
         self._connected = False
         self._names = state_names(config.action_schema)
+        self._reset_position = load_reset_position(config.home_position_file, self._names)
         self._camera_sizes = {
             config.scene_camera_key: (
                 config.scene_image_height, config.scene_image_width),
@@ -78,6 +115,20 @@ class NeroBimanual(Robot):
     @property
     def action_features(self) -> dict:
         return {name: float for name in self._names}
+
+    @property
+    def position_hold_action_keys(self) -> tuple[str, ...]:
+        """Action fields retained by rollout's local position hold.
+
+        The joint16 schema uses the checkpoint's native names rather than the
+        legacy ``.pos`` convention, so it must declare the complete contract.
+        """
+        return self._names
+
+    @property
+    def rollout_reset_position(self) -> dict[str, float] | None:
+        """Configured native reset/home target used by the rollout /reset command."""
+        return None if self._reset_position is None else dict(self._reset_position)
 
     @property
     def is_connected(self) -> bool:
