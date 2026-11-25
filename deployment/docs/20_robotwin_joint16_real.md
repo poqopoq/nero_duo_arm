@@ -172,7 +172,7 @@ sudo ./deployment/scripts/enable_can.sh can_right 1000000
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=5 auto_enable:=true \
-  tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 
 # 本机 realsense2_camera 4.59.1 需要 librealsense2 2.59；系统包若仍是
 # 2.58，直接 launch 会报 librealsense2.so.2.59 not found。可先永久升级：
@@ -681,7 +681,7 @@ source ros2_ws/install/setup.bash
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=5 auto_enable:=true \
-  tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 ```
 
 确认双臂状态为 `NORMAL`，无关节故障后再继续。

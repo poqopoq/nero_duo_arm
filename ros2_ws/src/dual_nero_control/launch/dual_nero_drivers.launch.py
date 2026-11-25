@@ -34,7 +34,7 @@ def _resolve_recover_script() -> Path:
 # through link7 -> tool0 -> tcp_link. The 172.5 mm tool-axis estimate includes
 # the 42.5 mm sensor/connector stack and the official mesh's 130 mm pad midpoint.
 # Replace it with a pivot calibration before using robot TCP data.
-DEFAULT_TCP_OFFSET = '[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+DEFAULT_TCP_OFFSET = '[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 RECOVER_SCRIPT = _resolve_recover_script()
 
 

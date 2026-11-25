@@ -22,7 +22,7 @@ case "${component}" in
     exec ros2 launch dual_nero_control dual_nero_drivers.launch.py \
       can_left:=can_left can_right:=can_right \
       speed_percent:=5 auto_enable:=true \
-      tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+      tcp_offset:='[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
     ;;
   cameras)
     export LD_LIBRARY_PATH="/home/work/.local/opt/realsense-2.59/opt/ros/humble/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"

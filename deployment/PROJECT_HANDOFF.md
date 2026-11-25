@@ -41,7 +41,7 @@ world: 桌面平面、两基座中心中点，+X 指向桌内，+Y 指向左
 left base:  xyz=[0, +0.30, 0], yaw=pi
 right base: xyz=[0, -0.30, 0], yaw=pi
 基座中心距: 0.60 m
-TCP: tool0 沿工具轴 +0.1725 m（OP3 网格估计）；OP3 闭合外高约 0.153 m
+TCP: tool0 沿工具轴 +0.1705 m（OP3_P0 网格估计）；官方模型包围盒高度约 0.173 m
 ```
 
 ## 3. 当前状态
@@ -57,8 +57,9 @@ TCP: tool0 沿工具轴 +0.1725 m（OP3 网格估计）；OP3 闭合外高约 0.
 - 旧 CTAG 夹爪空载 10×10 位置/速度 `200/200`、低速软件急停 `4/4`。
 - 默认 ROS 2 夹爪入口已切换为 OmniPicker 3 CAN FD；官方控制帧、1M/5M
   BRS、只读位置查询、ZQWL/SocketCAN 后端和 ROS 兼容接口已实现。
-- 官网 OP3 URDF/网格已集成，MoveIt 主关节改为 `*_op3_wide1_joint`，
-  其余七个指节由 mimic 跟随；默认 TCP 使用 0.1725 m 网格估计。
+- 官网当前 `OP3_P0_URDF_EC` URDF/网格已集成，MoveIt 主关节为
+  `*_op3_joint1`（0..0.02 m）；厂商未提供闭环 mimic，12 个旋转关节作为
+  被动关节保留。默认 TCP 使用 0.1705 m 网格估计，真实耦合仍须现场验证。
 - 单臂/双臂 VLA bridge 的 dry-run、IK 干跑和假 action server 测试。
 - 相机外参求解的合成数据测试：固定相机与 eye-in-hand 均通过。
 - 夹爪实物 TCP 枢轴标定工具、开度拟合工具及其单元测试。

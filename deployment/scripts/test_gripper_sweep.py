@@ -31,13 +31,14 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, Int32
 from std_srvs.srv import SetBool, Trigger
 
-OP3_JOINT_OPEN_RAD = 0.39
+OP3_JOINT_OPEN_M = 0.0
+OP3_JOINT_CLOSED_M = 0.02
 OP3_MAX_WIDTH_MM = 120.0
 
 
 def joint_from_position(position: int) -> float:
     ratio = min(1.0, max(0.0, position / 1000.0))
-    return (1.0 - ratio) * OP3_JOINT_OPEN_RAD
+    return OP3_JOINT_OPEN_M + ratio * (OP3_JOINT_CLOSED_M - OP3_JOINT_OPEN_M)
 
 
 def opening_from_position(position: int) -> float:

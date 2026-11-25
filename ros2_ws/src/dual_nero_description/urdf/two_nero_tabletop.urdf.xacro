@@ -15,13 +15,13 @@
   <xacro:arg name="include_gripper" default="true"/>
   <xacro:arg name="left_tcp_x" default="0.0"/>
   <xacro:arg name="left_tcp_y" default="0.0"/>
-  <xacro:arg name="left_tcp_z" default="0.1725"/>
+  <xacro:arg name="left_tcp_z" default="0.1705"/>
   <xacro:arg name="left_tcp_roll" default="0.0"/>
   <xacro:arg name="left_tcp_pitch" default="0.0"/>
   <xacro:arg name="left_tcp_yaw" default="0.0"/>
   <xacro:arg name="right_tcp_x" default="0.0"/>
   <xacro:arg name="right_tcp_y" default="0.0"/>
-  <xacro:arg name="right_tcp_z" default="0.1725"/>
+  <xacro:arg name="right_tcp_z" default="0.1705"/>
   <xacro:arg name="right_tcp_roll" default="0.0"/>
   <xacro:arg name="right_tcp_pitch" default="0.0"/>
   <xacro:arg name="right_tcp_yaw" default="0.0"/>

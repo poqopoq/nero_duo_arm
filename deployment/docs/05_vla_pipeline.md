@@ -116,7 +116,7 @@ source install/setup.bash
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=5 auto_enable:=true \
-  tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 
 ros2 launch dual_nero_cameras all_cameras.launch.py
 
@@ -131,7 +131,7 @@ ros2 launch dual_nero_moveit_config moveit_execution.launch.py \
 不是夹爪 TCP。双臂 launch 文件默认使用 OmniPicker 3 官方网格得到的捏合点估计；机械安装后仍必须用枢轴标定替换：
 
 ```text
-link7 -> tcp_link = [0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
+link7 -> tcp_link = [0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
 ```
 
 该值与 `two_nero_tabletop.urdf.xacro` 中 `link7 -> tool0 -> tcp_link` 的合成
@@ -783,7 +783,7 @@ watchdog 锁存、IK 失败、关节单步超限、14 关节单 goal、14-D axis
 `dual_nero_drivers.launch.py` 现在默认：
 
 ```text
-tcp_offset = [0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
+tcp_offset = [0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]
 ```
 
 实测 `check_tcp_contract.py`：

@@ -4,7 +4,8 @@
 > [OmniPicker 产品手册](https://www.agibot.com/DOCS/OS/omnipicker-manual)
 > 第 6.3 节，并参考
 > [AgibotTech/agilink_omnihand_sdk](https://github.com/AgibotTech/agilink_omnihand_sdk)
-> 的 OP3 ROS 2 文档；官方 URDF/网格来自产品手册附录。旧版 CTAG2F90-D 驱动仍保留为
+> 的 OP3 ROS 2 文档。当前 URDF/网格来自 AGILINK [Technical Documents](https://www.agilink-ai.com/omni-picker3tdf/24.html)
+> 中的 `OP3_P0_URDF_EC` 包。旧版 CTAG2F90-D 驱动仍保留为
 > `ctag_left_gripper_node` / `ctag_right_gripper_node`。
 
 
@@ -149,10 +150,11 @@ ros2 launch dual_nero_moveit_config moveit_execution.launch.py \
   gripper_allow_motion:=true left_gripper_allow_motion:=true
 ```
 
-当前 MoveIt 使用 `*_op3_wide1_joint` 作为唯一主动关节，其余指节通过 mimic
-跟随。模型网格来自官网 URDF，闭合外形约 `88.1 × 153 mm`，张开外形约
-`125 × 143 mm`；`wide1` 的 `0.39 rad` 对应张开姿态。网格到捏合点的
-`0.130 m` 和传感器栈后的 `0.1725 m` 是初始估计，仍需枢轴标定确认。
+当前 MoveIt 使用 `*_op3_joint1` 作为唯一主动关节，范围 `0..0.02 m`。
+模型来自 AGILINK 技术资料页当前的 `OP3_P0_URDF_EC` 包，包含 16 个实体/参考
+link 和 15 个 joint。厂商 URDF 未提供闭环约束的 mimic 参数，因此本项目保留
+12 个被动旋转关节，不伪造联动比例。网格到捏合点的 `0.128 m` 和传感器栈后的
+`0.1705 m` 是初始估计，仍需枢轴标定确认。
 
 ## 4. ROS 2 接口
 
@@ -187,8 +189,8 @@ ros2 launch dual_nero_moveit_config moveit_execution.launch.py \
 | `motion_acceleration_percent` | `100` | 官方 `Acc Cmd` 百分比 |
 | `motion_deceleration_percent` | `100` | 官方 `Dec Cmd` 百分比 |
 | `position_tolerance` | `8` | `0..1000` 位置容差 |
-| `joint_name` | `<side>_op3_wide1_joint` | URDF/MoveIt 主关节 |
-| `joint_closed_rad` / `joint_open_rad` | `0.0` / `0.39` | 官方网格闭合/张开关节角 |
+| `joint_name` | `<side>_op3_joint1` | URDF/MoveIt 主关节 |
+| `joint_open_m` / `joint_closed_m` | `0.0` / `0.02` | 官方 `joint1` 直线关节两端 |
 | `parallel_gripper_width_mm` | `120` | `width` 话题的标称开度上限 |
 
 `Force Cmd` 是厂商协议的力/力矩百分比，不是 N 或 Nm 的闭环传感器读数。

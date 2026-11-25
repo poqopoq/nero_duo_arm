@@ -549,18 +549,12 @@ function updatePoseModeHint() {
 
 function applyGripperPose(side) {
   const state = app.sides[side];
-  const jointRad = state?.gripper?.joint_rad;
-  if (!app.robot || typeof jointRad !== 'number' || !Number.isFinite(jointRad)) {
+  const jointValue = state?.gripper?.joint_value ?? state?.gripper?.joint_rad;
+  if (!app.robot || typeof jointValue !== 'number' || !Number.isFinite(jointValue)) {
     return;
   }
-  const coupledJoints = [
-    'wide1', 'wide2', 'wide3', 'wide_loop',
-    'narrow1', 'narrow2', 'narrow3', 'narrow_loop',
-  ];
-  for (const name of coupledJoints) {
-    const joint = app.robot.joints[`${side}_op3_${name}_joint`];
-    if (joint) joint.setJointValue(jointRad);
-  }
+  const joint = app.robot.joints[`${side}_op3_joint1`];
+  if (joint) joint.setJointValue(jointValue);
 }
 
 function applyArmPose(side) {

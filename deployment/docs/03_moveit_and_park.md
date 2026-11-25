@@ -10,14 +10,15 @@
 | `left_arm` | 单链 | `left_tcp_link` |
 | `right_arm` | 单链 | `right_tcp_link` |
 | `both_arms` | 组合 | `left_arm` + `right_arm` |
-| `left_gripper` | 单关节 | `left_op3_wide1_joint` |
-| `right_gripper` | 单关节 | `right_op3_wide1_joint` |
+| `left_gripper` | 单关节 | `left_op3_joint1` |
+| `right_gripper` | 单关节 | `right_op3_joint1` |
 | `both_grippers` | 组合 | `left_gripper` + `right_gripper` |
 
-夹爪主关节范围 `[0, 0.39] rad`：`0` 闭合，`0.39` 张开；其余七个指节
-通过 mimic 跟随。法兰与夹爪之间保留 `25 mm` 力传感器和 `17.5 mm` 连接块。
-OP3 官方网格闭合高度约 `153 mm`；TCP 相对 `tool0` 沿工具轴初始估计偏移
-`0.1725 m`，由 130 mm 指腹中位和 42.5 mm 传感器栈组成，必须再做枢轴标定。
+夹爪主动关节是 `joint1` 直线关节，范围 `[0, 0.02] m`。当前官网
+`OP3_P0_URDF_EC` 文件没有把闭环约束写成 URDF mimic，因此其余 12 个旋转
+关节作为被动关节暴露，不伪造耦合比例。法兰与夹爪之间保留 `25 mm` 力传感器
+和 `17.5 mm` 连接块。TCP 相对 `tool0` 的初始估计偏移为 `0.1705 m`，由
+128 mm 指腹中位和 42.5 mm 传感器栈组成，必须再做枢轴标定。
 
 ## 2. 启动规划
 
@@ -121,7 +122,7 @@ right_joint7:  1.298612230
 - 支撑位通过 MoveIt `check_state_validity`，要求 `valid=True, contacts=0`。
 - 夹爪会增加腕部负载；停止位失能后漂出限位是正常现象。驱动 launch 默认在
   上电 `8 s` 后自动执行恢复，不要在恢复完成前让 MoveIt 规划。
-- 驱动必须带 `tcp_offset=[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]`；
+- 驱动必须带 `tcp_offset=[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]`；
   `reset_to_standard_support.sh` 已内置该参数。TCP 自检见
   `deployment/scripts/check_tcp_contract.py`。
 

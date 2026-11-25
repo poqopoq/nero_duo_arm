@@ -140,14 +140,14 @@ ros2 launch dual_nero_webapp webapp.launch.py \
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=5 auto_enable:=false \
-  tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 
 # 真机运动：上电自动使能；恢复使用小步位置序列，不修改 speed_percent
 ros2 launch dual_nero_control dual_nero_drivers.launch.py \
   can_left:=can_left can_right:=can_right \
   speed_percent:=40 auto_enable:=true \
   recover_joint_limits:=true recover_joint_limits_delay_sec:=8.0 \
-  tcp_offset:='[0.2035, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
+  tcp_offset:='[0.2015, 0.0, -0.0235, -1.5708, 0.0, -1.5708]'
 ```
 
 `tcp_offset` 默认已切换到 OmniPicker 3 官方网格得到的估计值；机械安装后仍需枢轴标定并显式覆盖。

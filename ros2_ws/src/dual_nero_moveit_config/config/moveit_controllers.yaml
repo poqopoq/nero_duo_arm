@@ -37,11 +37,11 @@ moveit_simple_controller_manager:
     type: GripperCommand
     default: true
     joints:
-      - right_op3_wide1_joint
+      - right_op3_joint1
 
   left_gripper_controller:
     action_ns: gripper_cmd
     type: GripperCommand
     default: true
     joints:
-      - left_op3_wide1_joint
+      - left_op3_joint1

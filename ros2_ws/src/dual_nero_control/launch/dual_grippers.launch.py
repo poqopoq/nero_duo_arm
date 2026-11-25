@@ -33,7 +33,7 @@ def _gripper_node(
                 enable_motor, value_type=bool),
             'can_fd': ParameterValue(can_fd, value_type=bool),
             'brs': ParameterValue(brs, value_type=bool),
-            'joint_name': f'{side}_op3_wide1_joint',
+            'joint_name': f'{side}_op3_joint1',
             'bitrate': 1_000_000,
             'data_bitrate': 5_000_000,
             'parallel_gripper_width_mm': 120.0,

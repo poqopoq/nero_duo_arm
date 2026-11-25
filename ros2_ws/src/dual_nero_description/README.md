@@ -10,15 +10,16 @@ gripper description.
 - `meshes/omnipicker3/`: official vendor meshes reproduced under
   `meshes/omnipicker3/SOURCE.md`.
 
-The vendor URDF has independent revolute joints for the finger loops. The
-deployment macro couples the seven non-master joints to
-`<side>_op3_wide1_joint` with a multiplier of 1. The resulting master range is
-`0..0.39 rad`, with `0` matching the documented closed dimensions and `0.39`
-matching the open dimensions.
+The current AGILINK `OP3_P0_URDF_EC` package represents the single driven
+mechanism with prismatic `joint1`; the remaining twelve revolute joints model
+closed-loop linkage members. The vendor file does not provide mimic equations,
+so this package exposes those joints as passive and does not invent coupling
+ratios. For the ROS control and MoveIt contract, `<side>_op3_joint1` is the
+master joint, with a corrected SI range of `0..0.02 m`.
 
-The fingerprint estimate is `0.130 m` from the OP3 mounting face. The deployed
+The initial pinching-point estimate is `0.128 m` from the OP3 mounting face. The deployed
 25 mm force sensor and 17.5 mm connector give a default `tool0 -> tcp` offset
-of `0.1725 m`. Treat this as an initial model value and replace it with pivot
+of `0.1705 m`. Treat this as an initial model value and replace it with pivot
 calibration.
 
 Validate both models after changing transforms:

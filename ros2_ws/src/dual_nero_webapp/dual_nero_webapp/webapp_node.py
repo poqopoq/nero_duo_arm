@@ -278,7 +278,7 @@ class WebappNode(Node):
         self.declare_parameter('right_base_yaw', 3.141592653589793)
         self.declare_parameter('include_gripper', True)
         tcp_defaults = {
-            'x': 0.0, 'y': 0.0, 'z': 0.1725,
+            'x': 0.0, 'y': 0.0, 'z': 0.1705,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
         }
         for side in SIDES:
@@ -773,7 +773,7 @@ class WebappNode(Node):
         by_name = {
             name: float(value) for name, value in zip(msg.name, msg.position)
         }
-        joint = by_name.get(f'{side}_op3_wide1_joint')
+        joint = by_name.get(f'{side}_op3_joint1')
         if joint is None and len(msg.position) == 1:
             joint = float(msg.position[0])
         with self._gripper_lock:
@@ -850,6 +850,7 @@ class WebappNode(Node):
         return {
             'position': gripper['position'],
             'width_m': gripper['width_m'],
+            'joint_value': gripper['joint_rad'],
             'joint_rad': gripper['joint_rad'],
             'position_age_sec': position_age,
             'width_age_sec': width_age,

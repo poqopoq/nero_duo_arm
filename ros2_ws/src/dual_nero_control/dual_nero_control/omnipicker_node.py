@@ -93,9 +93,9 @@ class OmniPickerNode(Node):
         self.declare_parameter('max_current', 200)  # compatibility, ignored
         self.declare_parameter('cancel_disables_motor', True)  # compatibility
         self.declare_parameter('parallel_gripper_width_mm', DEFAULT_OPENING_MAX_MM)
-        self.declare_parameter('joint_name', f'{side}_op3_wide1_joint')
-        self.declare_parameter('joint_open_rad', 0.39)
-        self.declare_parameter('joint_closed_rad', 0.0)
+        self.declare_parameter('joint_name', f'{side}_op3_joint1')
+        self.declare_parameter('joint_open_m', 0.0)
+        self.declare_parameter('joint_closed_m', 0.02)
         self.declare_parameter('position_min', POSITION_MIN)
         self.declare_parameter('position_max', DEFAULT_POSITION_MAX)
         self.declare_parameter('command_max', DEFAULT_POSITION_MAX)
@@ -157,8 +157,8 @@ class OmniPickerNode(Node):
         self._parallel_width_mm = float(
             gp('parallel_gripper_width_mm').value)
         self._joint_name = str(gp('joint_name').value)
-        self._joint_open_rad = float(gp('joint_open_rad').value)
-        self._joint_closed_rad = float(gp('joint_closed_rad').value)
+        self._joint_open_m = float(gp('joint_open_m').value)
+        self._joint_closed_m = float(gp('joint_closed_m').value)
         self._position_min = int(gp('position_min').value)
         self._position_max = int(gp('position_max').value)
         self._command_max = min(
@@ -187,7 +187,7 @@ class OmniPickerNode(Node):
         self._target_position: Optional[int] = None
         self._position: Optional[int] = None
         self._position_byte: Optional[int] = None
-        self._joint_rad: Optional[float] = None
+        self._joint_value: Optional[float] = None
         self._width_mm: Optional[float] = None
         self._status: Optional[OmniPickerStatus] = None
         self._feedback_monotonic = 0.0
@@ -351,18 +351,18 @@ class OmniPickerNode(Node):
                 f'Cannot initialize OmniPicker 3 {self._transport_kind} '
                 f'transport: {exc}')
 
-    def _position_to_joint(self, position: int) -> float:
+    def _position_to_joint_value(self, position: int) -> float:
         span = self._position_max - self._position_min
         ratio = (float(position) - self._position_min) / span
         ratio = min(1.0, max(0.0, ratio))
-        return self._joint_open_rad + ratio * (
-            self._joint_closed_rad - self._joint_open_rad)
+        return self._joint_open_m + ratio * (
+            self._joint_closed_m - self._joint_open_m)
 
-    def _joint_to_position(self, joint_rad: float) -> int:
-        span = self._joint_closed_rad - self._joint_open_rad
+    def _joint_value_to_position(self, joint_value: float) -> int:
+        span = self._joint_closed_m - self._joint_open_m
         if abs(span) < 1e-9:
-            raise ValueError('joint_open_rad and joint_closed_rad must differ')
-        ratio = (joint_rad - self._joint_open_rad) / span
+            raise ValueError('joint_open_m and joint_closed_m must differ')
+        ratio = (joint_value - self._joint_open_m) / span
         ratio = min(1.0, max(0.0, ratio))
         position = self._position_min + ratio * (
             self._position_max - self._position_min)
@@ -426,7 +426,7 @@ class OmniPickerNode(Node):
         with self._state_lock:
             self._position = position
             self._position_byte = int(round((1.0 - ratio) * 255.0))
-            self._joint_rad = self._position_to_joint(position)
+            self._joint_value = self._position_to_joint_value(position)
             self._width_mm = self._position_to_width(position)
             self._feedback_monotonic = now
             if self._motion_active and self._motion_target_position is not None:
@@ -458,7 +458,7 @@ class OmniPickerNode(Node):
             self._status = status
             self._position_byte = status.position_byte
             self._position = position
-            self._joint_rad = self._position_to_joint(position)
+            self._joint_value = self._position_to_joint_value(position)
             self._width_mm = self._position_to_width(position)
             self._feedback_monotonic = now
             if status.fault_code != FAULT_NONE:
@@ -713,7 +713,7 @@ class OmniPickerNode(Node):
             self.get_logger().warn('Rejecting gripper goal: allow_motion=false')
             return GoalResponse.REJECT
         lower, upper = sorted((
-            self._joint_open_rad, self._joint_closed_rad))
+            self._joint_open_m, self._joint_closed_m))
         if not lower <= command.position <= upper:
             self.get_logger().warn(
                 f'Rejecting gripper goal outside [{lower}, {upper}]: '
@@ -732,7 +732,7 @@ class OmniPickerNode(Node):
 
     def _execute_callback(self, goal_handle):
         result = GripperCommand.Result()
-        position = self._joint_to_position(goal_handle.request.command.position)
+        position = self._joint_value_to_position(goal_handle.request.command.position)
         with self._motion_lock:
             if self._motion_active:
                 self.get_logger().warn(
@@ -746,8 +746,8 @@ class OmniPickerNode(Node):
             self.get_logger().warn(f'Cannot execute gripper goal: {reason}')
             goal_handle.abort()
             result.position = (
-                float(self._joint_rad)
-                if self._joint_rad is not None else 0.0)
+                float(self._joint_value)
+                if self._joint_value is not None else 0.0)
             result.reached_goal = False
             return result
 
@@ -757,8 +757,8 @@ class OmniPickerNode(Node):
                     self._stop_motion('goal canceled')
                 goal_handle.canceled()
                 result.position = (
-                    float(self._joint_rad)
-                    if self._joint_rad is not None else 0.0)
+                    float(self._joint_value)
+                    if self._joint_value is not None else 0.0)
                 result.reached_goal = False
                 return result
             with self._state_lock:
@@ -770,7 +770,7 @@ class OmniPickerNode(Node):
                 stalled = self._motion_stalled
                 failed = self._motion_failed
                 deadline = self._motion_deadline
-                joint = self._joint_rad
+                joint = self._joint_value
             if not active:
                 result.position = float(joint) if joint is not None else 0.0
                 result.reached_goal = bool(reached)
@@ -798,7 +798,7 @@ class OmniPickerNode(Node):
     def _publish_feedback_messages(self) -> None:
         with self._state_lock:
             position = self._position
-            joint = self._joint_rad
+            joint = self._joint_value
             width = self._width_mm
             status = self._status
         if position is None or joint is None or width is None:
@@ -869,9 +869,12 @@ class OmniPickerNode(Node):
                 'motion_stalled': str(self._motion_stalled).lower(),
                 'position': (
                     str(self._position) if self._position is not None else ''),
+                'joint_value': (
+                    f'{self._joint_value:.6f}'
+                    if self._joint_value is not None else ''),
                 'joint_rad': (
-                    f'{self._joint_rad:.6f}'
-                    if self._joint_rad is not None else ''),
+                    f'{self._joint_value:.6f}'
+                    if self._joint_value is not None else ''),
                 'width_mm': (
                     f'{self._width_mm:.3f}'
                     if self._width_mm is not None else ''),
