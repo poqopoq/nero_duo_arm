@@ -12,9 +12,11 @@ setup(
          ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml", "README.md"]),
         ("share/" + package_name + "/launch",
-         ["launch/gripper_ft.launch.py"]),
+         ["launch/gripper_ft.launch.py",
+          "launch/gripper_ft_rs485.launch.py"]),
         ("share/" + package_name + "/config",
-         ["config/gripper_ft.yaml"]),
+         ["config/gripper_ft.yaml",
+          "config/gripper_ft_rs485.yaml"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -27,6 +29,8 @@ setup(
         "console_scripts": [
             "gripper_ft_node = "
             "dual_nero_gripper_ft_sensor.gripper_ft_node:main",
+            "gripper_ft_rs485_node = "
+            "dual_nero_gripper_ft_sensor.gripper_ft_rs485_node:main",
         ],
     },
 )

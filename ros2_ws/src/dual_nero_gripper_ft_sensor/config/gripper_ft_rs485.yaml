@@ -1,0 +1,21 @@
+gripper_ft_rs485_node:
+  ros__parameters:
+    serial_port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BH00URZP-if00-port0
+    baud_rate: 460800
+    device_id: 1
+    combined_query: true
+    rate_hz: 0.0
+    data_topic_face_a: /gripper_ft/a
+    data_topic_face_b: /gripper_ft/b
+    frame_id_face_a: gripper_ft_face_a
+    frame_id_face_b: gripper_ft_face_b
+    sensor_id_face_a: face_a
+    sensor_id_face_b: face_b
+    offset_face_a: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    offset_face_b: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    qos_reliability: best_effort
+    qos_depth: 1
+    response_timeout: 0.05
+    reconnect_interval: 1.0
+    expected_sensor_count: 2
+    rate_log_period: 5.0

@@ -3,6 +3,19 @@
 > 夹爪指尖六维力/力矩传感器，UART TTL，协议 V0.1.0。
 > ROS 2 包：`dual_nero_gripper_ft_sensor`、`dual_nero_gripper_ft_sensor_msgs`。
 
+
+## 0. 两套力传感链路(2026-11-25 更新)
+
+夹爪已切到 RS485。当前同时存在两套互相独立的力传感链路,不要混用:
+
+| 链路 | 硬件 | 物理接口 | 协议 | 驱动 |
+| --- | --- | --- | --- | --- |
+| 旧: 独立 TTL 传感器 | 外部六维力模块 | `/dev/ttyUSB4`,921600,UART TTL | `AA55` 帧 | `gripper_ft_node` |
+| 新: OP3 内置双六维力 | 夹爪两片力传感器(面A/面B) | OP3 RS485,460800 | `EE55` 寄存器帧 | `gripper_ft_rs485_node` |
+
+新链路的两片传感器不是独立 RS485 节点,而是 OP3 控制器
+`REG_TACTILE=0x06` 暴露的两个面,设备 ID 都是 1。详见第 10 节。
+
 ## 1. 接口定位
 
 传感器相对夹爪独立工作，不属于 ZQWL CAN 链路。ROS 2 节点只读串口并发布
@@ -340,3 +353,90 @@ cd /home/work/nero_duo_arm
 | 采样率偏高导致处理压力 | 改用 500 Hz 或降低下游订阅/发布频率 |
 
 传感器是夹爪末端附件，安装和走线不得干涉夹爪开合、机械臂运动或相机视野。
+
+## 10. OP3 RS485 内置双六维力(新硬件)
+
+### 10.1 拓扑与协议
+
+- 波特率:`460800@8N1`(厂商 SDK 固定值),device ID `1`。
+- 帧格式:`EE 55 | 29位ID(4B 小端) | len | data | CRC16(2B 小端)`。
+- 29 位 ID:`bit28-24 sub | bit23-18 reg 高6位 | bit17-16 reg 低2位 |
+  bit15-8 product=0x01 | bit7 R/W | bit6-0 dev`。
+- 寄存器 `0x06`(触觉/六维力):
+  - sub `0x00`:一次返回两片;
+  - sub `0x01`:面 A;sub `0x02`:面 B;
+  - 读数据:`data=00`,应答为 `总帧数, 帧序号, 6×float(LE)`(24 字节);
+  - 读传感器个数:`data=01`,应答 `02`。
+
+实测样例帧:
+
+```text
+位置查询  EE 55 01 01 13 01 00 D5 62
+        -> EE 55 01 01 13 01 02 51 00 43 29
+力个数    EE 55 01 01 06 00 01 01 36 03
+        -> EE 55 01 01 06 00 01 02 76 02
+两片数据  EE 55 01 01 06 00 01 00 36 03
+        -> EE 55 01 01 06 00 32 ...(2 字节帧头 + 48 字节 = 两片各 6 个 float)
+```
+
+### 10.2 启动
+
+```bash
+cd /home/work/nero_duo_arm/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch dual_nero_gripper_ft_sensor gripper_ft_rs485.launch.py
+```
+
+| 话题 | 类型 | 说明 |
+| --- | --- | --- |
+| `/gripper_ft/a` | `dual_nero_gripper_ft_sensor_msgs/msg/SixAxisForce` | 面 A |
+| `/gripper_ft/b` | `dual_nero_gripper_ft_sensor_msgs/msg/SixAxisForce` | 面 B |
+
+默认 `best_effort`、depth 1、`combined_query:=true`(一次事务读两片)。
+只能读寄存器 0x06,不会发送运动命令。
+
+独立读取(不启动 ROS):
+
+```bash
+cd /home/work/nero_duo_arm
+./deployment/scripts/gripper_ft_rs485.py --rate 50
+```
+
+### 10.3 频率实测与上限
+
+460800@8N1 线速 46080 B/s。合并读一次为 10 B 请求 + 59 B 应答 = 69 B,
+纯线路时间约 1.5 ms,理论上限 ~668 Hz。
+
+实测(`combined_query=true`):
+
+| 场景 | 频率 |
+| --- | --- |
+| FTDI `latency_timer=16 ms`(默认) | 62.5 Hz |
+| `latency_timer=1 ms`,ROS 节点 | **~340 Hz** |
+| 纯串口 `read_all()`(无 ROS) | ~355 Hz |
+| 单次往返 | 均值 2.83 ms,p50 3.00 ms,p99 3.97 ms |
+| 首字节到达 | 均值 1.55 ms |
+
+瓶颈不是波特率,而是 USB 帧 + 设备应答(FTDI 1 ms 延迟 + 约 1.3 ms 设备/线路)。
+即使把 `uart_baudrate` 提到 921600,线路时间只从 1.5 ms 降到 0.75 ms,
+预计也只能到 **450–500 Hz**,到不了 1000 Hz。
+
+**结论:这套 FTDI USB-RS485 请求/应答链路的上限约 350–500 Hz,1000 Hz 做不到。**
+
+要 1000 Hz,可选:
+
+1. **推荐:CAN FD(1M/5M)**。原来的链路,5 Mbps 下一帧 <0.2 ms,1000 Hz 很容易;
+2. 换低延迟 USB-RS485 适配器(原生 UART / 低延迟芯片),并确认设备应答 <1 ms;
+3. 固件支持 RS485 主动上传(而非请求/应答),波特率 ≥921600。
+
+当前节点已按高频设计:
+`rate_hz:=0`(不限速)、`combined_query:=true`、`best_effort` + depth 1。
+
+### 10.4 标定
+
+- 数组顺序按厂商定义是 `Fx Fy Fz Mx My Mz`,但协议未给出单位、正方向和零点;
+- 静止读数有明显零偏(实测面 A `Fz≈-49.6`,面 B `Fz≈-35.6`);
+- 节点支持 `offset_face_a` / `offset_face_b` 两个 6 元素参数做零点扣除;
+- 用 `gripper_ft_rs485.py --duration 10` 采均值作为 offset,再做轴映射和量纲标定。
+

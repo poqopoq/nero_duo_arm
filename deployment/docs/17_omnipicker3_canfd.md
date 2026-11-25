@@ -7,6 +7,11 @@
 > 的 OP3 ROS 2 文档；官方 URDF/网格来自产品手册附录。旧版 CTAG2F90-D 驱动仍保留为
 > `ctag_left_gripper_node` / `ctag_right_gripper_node`。
 
+
+> **2026-11-25 更新**:现场夹爪已改为 **RS485** 连接(不再走 CAN FD)。
+> RS485 使用 `460800@8N1` 和 `EE55 + 29位寄存器ID` 帧,详见第 8 节。
+> 下方 CAN FD 内容仍然有效,用于切回 CAN FD 或对照协议。
+
 官方模型文件已经复制到 `dual_nero_description/meshes/omnipicker3/`，来源记录
 见 `meshes/omnipicker3/SOURCE.md`。
 
@@ -230,3 +235,66 @@ OP3 简化 CAN 协议没有提供“物理失能电机”的确认字段。本�
 4. 低速、低力执行 `open -> close -> open`，记录实际 120 mm 行程中的接触点。
 5. 再执行 `test_gripper_estop.py` 和 MoveIt 小幅动作验收。
 6. 完成机械几何/TCP 标定后，才允许把夹爪位置纳入抓取策略和自动数据采集。
+
+## 8. RS485 连接(现场当前使用)
+
+现场 OP3 已切到 RS485:适配器 `TR+/TR-` 接夹爪 6PIN 的 `RS485_A/B`,
+设备 ID `1`,波特率 `460800@8N1`。
+
+### 8.1 关键结论
+
+- 现场固件使用**官方 SDK 完整寄存器协议**,不是手册第 6.4.3 节的简化
+  `0x4141` 帧,也不是 Modbus RTU;
+- 帧格式与 CAN 寄存器协议相同,只是用 RS485 承载:
+
+```text
+EE 55 | 29位ID(4B 小端) | len | data | CRC16(2B 小端)
+```
+
+- 29 位 ID:`bit28-24 sub | bit23-18 reg 高6位 | bit17-16 reg 低2位 |
+  bit15-8 product=0x01 | bit7 R/W | bit6-0 dev`;
+- 实测位置查询:`EE 55 01 01 13 01 00 D5 62` →
+  `EE 55 01 01 13 01 02 51 00 43 29`(位置 81);
+- 空闲时总线上没有自动上传,是纯请求/应答;
+- 同一适配器上可以挂多个设备(按 device ID 区分),但本机实测 ttyUSB6
+  上只有 OP3(device 1)。
+
+### 8.2 常用寄存器
+
+| reg | 说明 | sub |
+| --- | --- | --- |
+| `0x06` | 触觉/六维力 | `0x00` 全部、`0x01` 面A、`0x02` 面B |
+| `0x13` | 位置控制 | `0x01`,i16,0..4095 |
+| `0x14` | 位置+电流混合 | `0x00` |
+| `0x15` | 轻柔夹持 | `0x00` |
+| `0x20` | 错误码 | `0x01` |
+
+### 8.3 工具
+
+```bash
+cd /home/work/nero_duo_arm
+
+# 夹爪状态/开合/位置(官方 SDK,460800)
+./deployment/scripts/gripper_rs485.py status
+./deployment/scripts/gripper_rs485.py open
+./deployment/scripts/gripper_rs485.py close
+./deployment/scripts/gripper_rs485.py position --target 500
+
+# 两片六维力实时读数(直连 EE55 寄存器,不依赖 SDK)
+./deployment/scripts/gripper_ft_rs485.py --rate 50
+
+# 串口总线探测(Modbus + FT SN + EE55 寄存器 + SDK)
+./deployment/scripts/probe_rs485_bus.py /dev/ttyUSB6 --baud 460800
+```
+
+ROS 2 力传感器节点见 `docs/18_gripper_ft_sensor.md` 第 10 节。
+
+### 8.4 注意事项
+
+- `create_hand_by_rs485()` 在 SDK 层固定 460800,传其它值会直接报
+  `omnipicker_3 uses a fixed baud rate of 460800`;
+- 要提高频率到 1000 Hz,需要把固件 `uart_baudrate` 提到 921600 并重启,
+  同时把 FTDI `latency_timer` 设为 1 ms(见 doc 18 第 10.3 节);
+- 改波特率后 SDK 工厂方法无法使用,需走 `EE55` 原始帧;
+- RS485 与 CAN FD 不要同时接:同一台夹爪只有一个通信模式生效。
+
