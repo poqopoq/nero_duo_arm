@@ -78,7 +78,7 @@ ros2 launch dual_nero_webapp webapp.launch.py \
 ```
 
 浏览器打开 `http://<机器人主机IP>:8080`。查看 IP：
-
+http://10.10.10.46:8080
 ```bash
 hostname -I
 ```
